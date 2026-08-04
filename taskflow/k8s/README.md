@@ -1,3 +1,0 @@
-# Kubernetes
-
-Configuraciones de despliegue.
