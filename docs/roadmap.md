@@ -18,15 +18,11 @@ pasando por CI, en vez de retrofitear seguridad después.
 | `infra/bootstrap/` — bucket S3 de estado | ✅ |
 | Versión del provider AWS unificada a `~> 6.0` | ✅ |
 | Provider OIDC de GitHub en bootstrap + output | ✅ |
-| `infra/modules/github-oidc/` | 🟡 escrito; faltan 2 correcciones antes de aplicar |
+| `infra/modules/github-oidc/` — roles `plan` y `deploy` aplicados en AWS | ✅ |
 | Todo lo demás | ⬜ |
 
-**Pendiente inmediato en el módulo:**
-1. Separar el policy document del state: el rol `plan` no debe tener `PutObject`/`DeleteObject`
-   sobre `terraform.tfstate`, sólo sobre el `.tflock`.
-2. Meter el entorno en el nombre de los roles (`taskflow-${var.env}-github-plan`): los nombres
-   de rol de IAM son globales por cuenta y colisionan cuando exista `envs/prod`.
-3. Borrar `infra/modules/github-oidc/.terraform.lock.hcl` — los módulos no son root modules.
+**Siguiente acción:** el smoke test del sub-paso 5.8, para comprobar que la federación OIDC
+funciona de verdad antes de construir `pr.yml` encima.
 
 ---
 
@@ -43,8 +39,8 @@ pasando por CI, en vez de retrofitear seguridad después.
 - [x] **5.1/5.2** Provider OIDC en `infra/bootstrap` (recurso de cuenta, único) + output
 - [x] **5.3** Módulo `infra/modules/github-oidc/` con sus cuatro archivos
 - [x] **5.4** Trust policies: condiciones `aud` y `sub` para los roles `plan` y `deploy`
-- [~] **5.5** Permisos: `ReadOnlyAccess` ✅ + acceso al state — **hay que separarlo por rol**
-- [~] **5.7** Módulo consumido desde `envs/dev` ✅; falta el `apply` manual
+- [x] **5.5** Permisos: `ReadOnlyAccess` + acceso al state separado por rol (plan no escribe el state)
+- [x] **5.7** Módulo consumido desde `envs/dev` y aplicado a mano
 - [ ] **5.8** Verificar con un workflow desechable (`aws sts get-caller-identity`)
 - [ ] **6.** GitHub Environments `dev` y `prod`, con required reviewer en `prod`
 - [ ] **7.** `.github/workflows/pr.yml`: `lint-infra` + `terraform plan` comentado en el PR

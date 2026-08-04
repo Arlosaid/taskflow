@@ -300,6 +300,68 @@ root modules**: no tienen backend propio ni lock propio. El lock que manda es el
 
 ---
 
+## [5.7] El apply, y lo que aprendí leyendo el plan
+
+**Qué hice:** apliqué el módulo a mano desde `infra/envs/dev` con mi perfil local. Quedaron
+creados `taskflow-dev-github-plan` y `taskflow-dev-github-deploy` con sus políticas.
+
+### Renombrar un recurso = destruirlo y crearlo
+
+Al separar el policy document cambié las etiquetas de los recursos (`plan_state` →
+`plan_state_access`). El plan me mostró **2 to destroy**, y me asusté antes de leer el motivo:
+
+```
+# (because aws_iam_role_policy.deploy_state is not in configuration)
+```
+
+**Concepto:** Terraform identifica los recursos por su **dirección** (`aws_iam_role_policy.plan_state`),
+no por el nombre que tienen en AWS. Si cambio la etiqueta, para él el viejo desapareció de la
+configuración y hay uno nuevo. Destruir + crear.
+
+En una policy inline da igual, se recrea en milisegundos. **En una base de datos o un bucket,
+eso borra el recurso.** Para esos casos existe el bloque `moved`:
+
+```hcl
+moved {
+  from = aws_iam_role_policy.plan_state
+  to   = aws_iam_role_policy.plan_state_access
+}
+```
+
+Le dice "es el mismo objeto, sólo cambió de nombre" y el plan pasa a no mostrar cambios.
+Aquí no valía la pena, pero es la herramienta para el día que renombre algo con datos dentro.
+
+**Regla que me llevo: leer siempre el motivo del destroy antes de aprobar un plan.** "2 to
+destroy" no dice nada por sí solo; el comentario de arriba sí.
+
+### El `description` que se me cayó
+
+Al reescribir el archivo se me perdieron los `description` de los dos roles y el plan iba a
+borrarlos (`-> null`). No rompe nada, pero es lo único que distingue un rol de otro cuando los
+veo listados en la consola de IAM meses después. Los repuse antes de aplicar.
+
+**Recordatorio:** en un plan, un `-> null` significa que borré algo del código sin querer.
+Vale la pena buscarlos.
+
+### El resultado, que es la respuesta a una pregunta de entrevista
+
+| | `s3:GetObject` state | `s3:PutObject` state | `s3:PutObject` tflock |
+|---|---|---|---|
+| `plan` | ✅ | ❌ | ✅ |
+| `deploy` | ✅ | ✅ | ✅ |
+
+Esa tabla **es** la respuesta a *"¿qué impide que un pull request corrompa tu infraestructura?"*.
+El rol de plan puede leer el estado y tomar el lock, y nada más. No puede sobrescribirlo.
+
+### Pendiente de vigilar
+
+La condición `"s3:prefix" = "dev/*"` sobre el `ListBucket`: con `StringLike`, una llamada a
+`ListBucket` **sin** parámetro de prefijo no hace match y devuelve `AccessDenied`. Con un backend
+S3 de key fija no debería ocurrir, pero si en CI aparece un `AccessDenied` sobre `ListBucket`,
+ése es el primer sospechoso.
+
+---
+
 ## Referencia — qué detecta cada herramienta
 
 Los cuatro linters se solapan menos de lo que parece. Saber la diferencia es una pregunta

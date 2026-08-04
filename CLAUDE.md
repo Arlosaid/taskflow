@@ -24,8 +24,10 @@ a workstation once CI exists (bootstrap and the OIDC role are the two documented
 ## State of play
 
 Working: the Terraform state backend (S3, versioned, encrypted, native lockfile) and the
-account-level GitHub OIDC provider. The `github-oidc` module is written and wired into
-`envs/dev`, but not applied yet — see `docs/roadmap.md` for the corrections still pending on it.
+account-level GitHub OIDC provider. The `github-oidc` module is applied: roles
+`taskflow-dev-github-plan` (read-only, assumable from pull requests) and
+`taskflow-dev-github-deploy` (assumable from main and the dev/prod environments) exist in AWS.
+Not yet verified end to end — the OIDC smoke test is the next step.
 
 Not built yet: any CI workflow, any workload infrastructure (VPC/ECR/ECS/RDS), the
 application itself, tests, Dockerfile, migrations.
