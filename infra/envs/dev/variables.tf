@@ -5,7 +5,7 @@ variable "aws_region" {
 }
 
 variable "aws_profile" {
-  description = "AWS CLI profile"
+  description = "AWS CLI profile and is null when is CI/CD"
   type        = string
-  default     = "taskflow-dev"
+  default     = "null"
 }
