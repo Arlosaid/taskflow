@@ -18,8 +18,15 @@ pasando por CI, en vez de retrofitear seguridad después.
 | `infra/bootstrap/` — bucket S3 de estado | ✅ |
 | Versión del provider AWS unificada a `~> 6.0` | ✅ |
 | Provider OIDC de GitHub en bootstrap + output | ✅ |
-| `infra/modules/github-oidc/` | 🟡 esqueleto vacío |
+| `infra/modules/github-oidc/` | 🟡 escrito; faltan 2 correcciones antes de aplicar |
 | Todo lo demás | ⬜ |
+
+**Pendiente inmediato en el módulo:**
+1. Separar el policy document del state: el rol `plan` no debe tener `PutObject`/`DeleteObject`
+   sobre `terraform.tfstate`, sólo sobre el `.tflock`.
+2. Meter el entorno en el nombre de los roles (`taskflow-${var.env}-github-plan`): los nombres
+   de rol de IAM son globales por cuenta y colisionan cuando exista `envs/prod`.
+3. Borrar `infra/modules/github-oidc/.terraform.lock.hcl` — los módulos no son root modules.
 
 ---
 
@@ -34,10 +41,10 @@ pasando por CI, en vez de retrofitear seguridad después.
 
 - [x] **5.6** `var.aws_profile` con `default = null` para que dev funcione en local y en CI
 - [x] **5.1/5.2** Provider OIDC en `infra/bootstrap` (recurso de cuenta, único) + output
-- [ ] **5.3** Esqueleto del módulo `infra/modules/github-oidc/` (falta `required_providers` y los 3 archivos vacíos)
-- [ ] **5.4** Trust policies: condiciones `aud` y `sub` para los roles `plan` y `deploy`
-- [ ] **5.5** Permisos: `ReadOnlyAccess` + acceso acotado al state y al `.tflock`
-- [ ] **5.7** Consumir el módulo desde `envs/dev` y aplicar a mano (último apply manual legítimo)
+- [x] **5.3** Módulo `infra/modules/github-oidc/` con sus cuatro archivos
+- [x] **5.4** Trust policies: condiciones `aud` y `sub` para los roles `plan` y `deploy`
+- [~] **5.5** Permisos: `ReadOnlyAccess` ✅ + acceso al state — **hay que separarlo por rol**
+- [~] **5.7** Módulo consumido desde `envs/dev` ✅; falta el `apply` manual
 - [ ] **5.8** Verificar con un workflow desechable (`aws sts get-caller-identity`)
 - [ ] **6.** GitHub Environments `dev` y `prod`, con required reviewer en `prod`
 - [ ] **7.** `.github/workflows/pr.yml`: `lint-infra` + `terraform plan` comentado en el PR

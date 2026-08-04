@@ -24,7 +24,8 @@ a workstation once CI exists (bootstrap and the OIDC role are the two documented
 ## State of play
 
 Working: the Terraform state backend (S3, versioned, encrypted, native lockfile) and the
-account-level GitHub OIDC provider. The `github-oidc` module is scaffolded but not written.
+account-level GitHub OIDC provider. The `github-oidc` module is written and wired into
+`envs/dev`, but not applied yet — see `docs/roadmap.md` for the corrections still pending on it.
 
 Not built yet: any CI workflow, any workload infrastructure (VPC/ECR/ECS/RDS), the
 application itself, tests, Dockerfile, migrations.
@@ -61,7 +62,13 @@ terraform fmt -check -recursive
   even a read-only `terraform plan` needs `s3:PutObject`/`s3:DeleteObject` on
   `<env>/terraform.tfstate.tflock`.
 - `aws_iam_openid_connect_provider` is unique per AWS account. It lives in bootstrap so that
-  no per-environment state ever tries to own it.
+  no per-environment state ever tries to own it. **IAM role names are account-global too** —
+  every role name must carry the environment (`taskflow-dev-...`) or a second environment in
+  the same account will collide.
+- The `plan` and `deploy` roles must never share a policy document. `plan` gets `GetObject` on
+  the state plus `PutObject`/`DeleteObject` on the `.tflock` only; `deploy` gets write access to
+  the state itself. Sharing the document silently gives a pull request the ability to corrupt
+  state, which defeats the reason the two roles exist.
 
 ## Working with the user
 

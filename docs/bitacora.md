@@ -246,6 +246,60 @@ autenticarse. Junto con bootstrap, es el último `terraform apply` manual legít
 
 ---
 
+## [5.3–5.7] Escribiendo el módulo: dos errores que cometí
+
+**Qué hice:** el módulo completo — dos trust policies, dos roles, `ReadOnlyAccess` en el de plan,
+acceso al state, outputs — y lo consumí desde `envs/dev` con data lookups.
+
+**Decisiones propias que tomé y mantengo:**
+- `github_repository` como una sola variable `"owner/name"` en vez de `github_org` +
+  `github_repo`. Menos superficie y el claim `sub` se construye igual.
+- `state_key_prefix` como variable (`"dev/"`) en vez de derivarlo de `env`. Más explícito.
+- Condición `s3:prefix` sobre el `ListBucket`, acotándolo a `dev/*` en vez de al bucket entero.
+  Estrictamente más restrictivo de lo que necesitaba.
+
+### Error 1 — compartí el mismo policy document entre los dos roles
+
+Escribí un solo `data "aws_iam_policy_document" "state_access"` y se lo puse a `plan` y a
+`deploy`. Como ese documento concede `PutObject` y `DeleteObject` sobre
+`dev/terraform.tfstate`, **el rol de sólo lectura podía sobrescribir o borrar el state.**
+
+Eso anula la razón de existir de los dos roles. Un PR ya no "como mucho corre un plan": puede
+corromper el state, y entonces Terraform pierde el mapa de lo que existe y el siguiente apply
+intenta recrearlo todo.
+
+**Lo que confunde:** `plan` **sí** necesita escribir — pero **sólo el objeto `.tflock`**, nunca
+el state. Un permiso legítimo y otro peligroso viven en la misma ruta, separados por el sufijo
+del nombre. Van en documentos separados:
+
+- `plan` → `GetObject` sobre `terraform.tfstate` + `PutObject`/`DeleteObject` **sólo** sobre
+  `terraform.tfstate.tflock`
+- `deploy` → `GetObject`/`PutObject`/`DeleteObject` sobre ambos
+
+**La lección general:** reutilizar un policy document entre dos roles es cómodo, y es
+exactamente cómo se pierde el mínimo privilegio sin darse cuenta. Si dos roles existen porque
+deben poder hacer cosas distintas, sus políticas **no pueden ser el mismo objeto**.
+
+### Error 2 — los nombres de rol sin el entorno
+
+Puse `taskflow-github-plan` en vez de `taskflow-dev-github-plan`.
+
+**Los nombres de rol de IAM son globales por cuenta.** Cuando exista `envs/prod` en la misma
+cuenta e instancie este módulo otra vez, el apply muere con `EntityAlreadyExists`.
+
+Es **la misma clase de bug** que evité poniendo el provider OIDC en bootstrap, aparecida por
+otro lado: un recurso con identificador único a nivel cuenta, instanciado desde algo que se
+repite por entorno. Cuando un recurso de AWS tiene un nombre único global, el entorno tiene que
+ir **en el nombre**, no sólo en el directorio.
+
+### Error 3 — `.terraform.lock.hcl` dentro del módulo
+
+Se me coló porque corrí `terraform init` dentro del directorio del módulo. Los módulos **no son
+root modules**: no tienen backend propio ni lock propio. El lock que manda es el de
+`infra/envs/dev/`. Borrado.
+
+---
+
 ## Referencia — qué detecta cada herramienta
 
 Los cuatro linters se solapan menos de lo que parece. Saber la diferencia es una pregunta
