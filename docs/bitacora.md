@@ -1,0 +1,278 @@
+# Bitácora de TaskFlow
+
+Registro de **qué construí, por qué lo decidí así y qué aprendí**. Escrito para mi yo del futuro:
+cuando el proyecto esté terminado y tenga que explicarlo, esto es lo que se me va a haber olvidado.
+
+Una entrada por paso del [roadmap](./roadmap.md). Escríbela **en el momento**, no al final —
+la razón de una decisión se olvida mucho antes que la decisión.
+
+**Plantilla:**
+
+```markdown
+## [N] Título — fecha
+
+**Qué hice:** una o dos frases.
+**Por qué así:** la decisión y qué descarté.
+**Concepto que aprendí:** lo que no sabía antes.
+**Trampa:** lo que me costó tiempo o casi me sale mal.
+```
+
+---
+
+## [0] El backend de estado — bootstrap
+
+**Qué hice:** un bucket S3 para el state de Terraform, con versioning, cifrado SSE-S3,
+public access block completo, lifecycle de 90 días para versiones antiguas, y
+`prevent_destroy = true`.
+
+**Por qué así:**
+- **Backend local en bootstrap, a propósito.** Es la raíz del huevo-y-gallina: este módulo crea
+  el bucket donde los demás guardan su estado, así que no puede guardar el suyo ahí. Es uno de
+  los dos `terraform apply` manuales legítimos del proyecto.
+- **SSE-S3 (AES256) en vez de una llave KMS propia.** Es gratis; un CMK añade costo y gestión de
+  llaves sin beneficio real a esta escala.
+- **`use_lockfile = true` en vez de tabla DynamoDB.** El locking nativo de S3 evita mantener una
+  tabla extra sólo para el lock. Es más nuevo y más simple.
+- **Versioning encendido** = botón de deshacer si un apply corrompe el estado.
+
+**Concepto:** el state contiene IDs, ARNs y a veces valores sensibles. Ese bucket nunca puede
+ser público, bajo ninguna circunstancia — de ahí los cuatro flags del `public_access_block`.
+
+**Sobre las supresiones de checkov:** las cuatro que hay en `main.tf` llevan razón escrita.
+Un revisor confía más en una supresión justificada que en un reporte limpio. Lo que **no** se
+vale es suprimir sin explicar.
+
+---
+
+## [1] Unificar las versiones del provider
+
+**Qué hice:** `~> 6.0` y `required_version >= 1.11` en bootstrap, en `envs/dev` y en los módulos.
+
+**Por qué:** bootstrap estaba en `~> 5.60` y dev en `~> 6.0`. Dos providers distintos en el mismo
+repo producen comportamientos distintos ante el mismo HCL, y es el tipo de inconsistencia que un
+revisor nota inmediatamente.
+
+**Concepto:** son dos cosas diferentes.
+- `required_version` → la versión del **binario** de Terraform.
+- `required_providers` → la versión del **plugin** del proveedor (AWS).
+- `.terraform.lock.hcl` → fija los hashes exactos de los plugins. **Se commitea**, igual que un
+  `package-lock.json`. Es lo que hace que CI y tu laptop resuelvan exactamente lo mismo.
+
+---
+
+## [5.6] `aws_profile` opcional para que dev sirva en local y en CI
+
+**Qué hice:** cambié el `default` de `var.aws_profile` de `"taskflow-dev"` a `null`.
+
+**Por qué:** en mi máquina el provider debe usar el perfil `taskflow-dev` de
+`~/.aws/credentials`. En GitHub Actions no hay ningún perfil — `configure-aws-credentials`
+exporta las credenciales temporales como **variables de entorno**. Con un `profile` fijo, el
+provider ignora esas variables, busca un archivo que en el runner no existe, y falla.
+
+**Concepto:** el provider de AWS trata `null` como *"este argumento no fue especificado"* y cae a
+la **cadena estándar de credenciales**: variables de entorno → perfil → metadata de la
+instancia. Es el patrón general para hacer opcional cualquier argumento de un provider.
+
+**Trampa (me pasó):** `null` va **sin comillas**. Escribí `default = "null"` y eso es la cadena
+de texto `null` — el provider se pone a buscar un perfil llamado literalmente "null". Las tres
+variantes son distintas y sólo una sirve:
+
+| Valor | Qué hace |
+|---|---|
+| `null` | ✅ argumento no especificado → cadena estándar de credenciales |
+| `"null"` | ❌ busca un perfil llamado `null` |
+| `""` | ❌ busca un perfil con nombre vacío |
+
+**Trampa #2, la más importante que aprendí aquí:** **ninguna** de mis herramientas detecta este
+error. `terraform validate` lo da por bueno (es un string válido en un argumento que espera
+string), `fmt` sólo mira formato, `tflint` no puede saber qué perfiles existen en otra máquina,
+y `checkov` busca problemas de seguridad, no de portabilidad. No es un error de código: es un
+error de **entorno**. El código es correcto en mi laptop e incorrecto en el runner.
+
+Por eso el smoke test del paso 5.8 no es opcional — es la única verificación que realmente
+prueba esto.
+
+**En local ahora hay que exportar la variable:** `export TF_VAR_aws_profile=taskflow-dev`
+(Terraform lee automáticamente cualquier `TF_VAR_<nombre>`). No puedo commitear un `.tfvars`
+con eso porque `.gitignore` bloquea `*.tfvars`, y está bien que lo haga.
+
+---
+
+## [5.1 / 5.2] El provider OIDC vive en bootstrap
+
+**Qué hice:** `aws_iam_openid_connect_provider` para `token.actions.githubusercontent.com` en
+`infra/bootstrap/main.tf`, con su output.
+
+**Por qué ahí y no en `envs/dev`:** es un recurso **de cuenta, único** — sólo puede existir uno
+por URL en toda la cuenta AWS. Si lo pongo en `envs/dev`, el día que cree `envs/prod` el segundo
+`apply` explota con `EntityAlreadyExists` y hay que arreglarlo con `terraform import`.
+
+**Concepto — la regla más importante de organización en Terraform:** *un objeto de AWS debe
+estar en un solo state.* Si dos states creen que gestionan el mismo recurso se pisan. De ahí la
+jerarquía que quedó:
+
+- **bootstrap** = cosas de cuenta, únicas, casi inmutables (bucket de estado, provider OIDC)
+- **envs/** = cosas por entorno, que se crean y se destruyen (roles, VPC, ECS)
+
+**Sobre `thumbprint_list`:** lo omití. Es opcional en el provider AWS v5+; desde 2023 AWS valida
+el certificado de GitHub contra sus CAs raíz de confianza, así que ese hash largo que sale en
+todos los blogs ya no es un control de seguridad real — es un vestigio.
+
+---
+
+## [5.3] Qué es un módulo de Terraform
+
+**Concepto:** un módulo es una **función**. Entra por `variables`, sale por `outputs`, y lo de
+dentro es privado.
+
+Por eso **nunca lleva bloque `provider` ni `backend`** — eso es responsabilidad de quien lo
+llama. Si metes un `provider` dentro, el módulo queda atado a una región y unas credenciales
+concretas, deja de ser reutilizable, y Terraform te bloquea usar `for_each` sobre él.
+
+El `versions.tf` de un módulo declara qué provider **necesita** (`required_providers`), no cuál
+usa. Es una restricción, no una instanciación.
+
+---
+
+## [5.4 / 5.5] OIDC: cómo funciona y dónde está la seguridad
+
+### El flujo completo
+
+1. El job arranca. GitHub le inyecta `ACTIONS_ID_TOKEN_REQUEST_URL` y
+   `ACTIONS_ID_TOKEN_REQUEST_TOKEN`. El job pide un token a ese endpoint.
+2. GitHub emite un **JWT firmado** con claims que dicen quién es ese workflow: `iss`, `aud`,
+   `sub`, `repository`, `ref`, `environment`. Vale pocos minutos.
+3. `configure-aws-credentials` llama a **`sts:AssumeRoleWithWebIdentity`** con ese JWT.
+4. STS descarga las claves públicas de GitHub — sabe dónde buscarlas gracias al
+   `aws_iam_openid_connect_provider` que registré —, **verifica la firma**, y evalúa el **trust
+   policy** del rol contra los claims.
+5. Si pasa, devuelve credenciales temporales de 1 hora.
+
+**Lo que yo construyo en Terraform son sólo los pasos 3 y 4: el ancla de confianza y las reglas.**
+
+**La frase para explicarlo:** no hay llaves guardadas porque la identidad no es un secreto
+compartido, es una firma criptográfica que se verifica en cada ejecución. Nada que rotar, nada
+que filtrar.
+
+### La distinción de IAM que más se confunde
+
+Hay **dos políticas por rol** y hacen cosas completamente distintas:
+
+| | Dónde va | Responde a |
+|---|---|---|
+| **Trust policy** | `assume_role_policy` del rol | **¿QUIÉN puede convertirse en este rol?** |
+| **Permission policy** | attachment o `aws_iam_role_policy` | **¿QUÉ puede hacer una vez que ya lo es?** |
+
+OIDC vive enteramente en el **trust policy**. El permission policy ni se entera de que GitHub
+existe.
+
+### Las dos condiciones del trust policy
+
+- **`aud = sts.amazonaws.com`** → "este token fue emitido *para* STS". Protege contra reutilizar
+  un token que GitHub emitió para otro servicio.
+- **`sub`** → "viene de *este* repo, en *esta* circunstancia". **Es la frontera de seguridad
+  real.**
+
+### La forma del claim `sub` — la tabla a memorizar
+
+| Cómo dispara el job | `sub` que emite GitHub |
+|---|---|
+| `on: pull_request` | `repo:ORG/REPO:pull_request` |
+| `on: push` a main, job **sin** `environment:` | `repo:ORG/REPO:ref:refs/heads/main` |
+| job **con** `environment: prod` | `repo:ORG/REPO:environment:prod` |
+| tag | `repo:ORG/REPO:ref:refs/tags/v1.0.0` |
+
+**La trampa:** en cuanto un job declara `environment:`, el `sub` toma la forma `environment:` y
+**la rama desaparece del claim**. No es "main *y además* prod" — es sólo lo segundo. Por eso el
+rol de deploy lleva las tres variantes en sus `values`.
+
+### El error que hay que saber nombrar
+
+`repo:Arlosaid/taskflow:*` parece inofensivo y no lo es: hace match con **cualquier** rama.
+Cualquiera que consiga pushear una rama al repo puede asumir el rol de despliegue a producción.
+El comodín convierte una frontera de seguridad en decoración. Por eso uso `StringEquals` y no
+`StringLike` — sin comodines que necesitar, `StringEquals` no puede degradarse por accidente.
+
+### Dos roles, no uno
+
+- **`plan`** — sólo lectura, asumible desde pull requests. Un PR malicioso, como mucho, corre un plan.
+- **`deploy`** — permisos de apply, asumible sólo desde `main` / los Environments.
+
+Sobre forks: GitHub restringe fuertemente los permisos del token en PRs desde forks, así que en
+la práctica un fork no obtiene el token OIDC. Pero **no dependo de eso** — el rol de plan es de
+sólo lectura de todas formas. Dos capas, no una.
+
+### Detalles de permisos que aprendí
+
+- **`data "aws_iam_policy_document"` no llama a AWS.** Sólo renderiza JSON. Se usa en vez de
+  `jsonencode` porque da validación en `terraform validate` y un diff legible en el plan.
+- **Attachment vs inline:** `aws_iam_role_policy_attachment` conecta una política que existe por
+  separado y es compartible (como la managed `ReadOnlyAccess`); `aws_iam_role_policy` es inline,
+  pertenece al rol y muere con él. Usé inline para el acceso al state porque es específica de
+  ese rol y nadie más debería tenerla.
+- **Un rol "de sólo lectura" necesita `PutObject`.** Con `use_lockfile = true`, `terraform plan`
+  crea un objeto `.tflock` en S3 para adquirir el lock y lo borra al terminar. Sin ese permiso el
+  plan muere antes de empezar. Está acotado a *exactamente* esa clave, no al bucket entero.
+- **`max_session_duration = 3600`** → las credenciales caducan en 1 hora. Cuanto más corta la
+  sesión, menor la ventana si algo se filtra.
+- **El rol de deploy nace casi sin permisos.** Todavía no hay nada que desplegar. Crecen servicio
+  por servicio en el Bloque D. Una política ancha "temporal" nunca se cierra.
+- Cuando llegue a necesitar permisos de IAM (para crear los roles de ECS), hay que acotarlos a
+  nombres `taskflow-*` y exigir un **permissions boundary**. Si no, el rol de deploy puede crear
+  un rol admin y escalar privilegios.
+
+---
+
+## [5.7] Por qué `data` en vez de ARNs hardcodeados
+
+En `envs/dev` busco el provider OIDC con un `data "aws_iam_openid_connect_provider"` en vez de
+pegar el ARN como string. Ventajas: no necesito saber mi account ID, funciona igual en otra
+cuenta, y si el provider no existe **Terraform falla claramente en el plan** en vez de crear un
+rol roto que descubro tres días después.
+
+**Concepto — `data` vs `resource`:**
+- `resource` = Terraform **gestiona el ciclo de vida** (crea, modifica, destruye).
+- `data` = Terraform sólo **lee** algo que ya existe. Nunca lo toca.
+
+El provider OIDC es un `resource` en bootstrap y un `data` en dev: el mismo objeto de AWS,
+bootstrap lo posee, dev sólo lo consulta.
+
+La alternativa "de libro" sería `terraform_remote_state` para leer los outputs de bootstrap,
+pero bootstrap usa backend local — no hay state remoto que leer. El data lookup lo resuelve
+mejor.
+
+**Este apply es manual y está bien.** CI no puede crear el rol que CI necesita para
+autenticarse. Junto con bootstrap, es el último `terraform apply` manual legítimo del proyecto.
+
+---
+
+## Referencia — qué detecta cada herramienta
+
+Los cuatro linters se solapan menos de lo que parece. Saber la diferencia es una pregunta
+frecuente de entrevista.
+
+| Herramienta | Detecta | Ejemplo |
+|---|---|---|
+| `terraform fmt` | sólo formato | indentación inconsistente |
+| `terraform validate` | sintaxis y tipos, **sin llamadas a la nube** | variable no declarada, tipo de atributo equivocado |
+| `tflint` | corrección específica del provider | tipo de instancia inválido, argumento deprecado |
+| `checkov` / `tfsec` | **misconfiguración de seguridad** | bucket sin cifrado, SG abierto a `0.0.0.0/0`, RDS sin cifrar |
+| `trivy` (imagen) | CVEs en paquetes del SO y dependencias | `libssl` vulnerable en la imagen base |
+| `gitleaks` | credenciales commiteadas | una llave de AWS en un notebook |
+| `pip-audit` | dependencias de Python vulnerables | CVE conocido en una librería fijada |
+
+**Y la lección de [5.6]:** hay una clase entera de fallos que **ninguna** de ellas cubre — los
+que dependen del entorno de ejecución. Sólo aparecen cuando el código corre en un contexto
+distinto al tuyo.
+
+---
+
+## Cosas que decidí NO hacer (y por qué)
+
+- **ADRs.** El plan original los recomendaba. Es un proyecto personal de práctica; las decisiones
+  viven en esta bitácora, que cumple la misma función sin la ceremonia.
+- **DynamoDB para el lock del state.** El locking nativo de S3 (`use_lockfile`) es más simple.
+- **CMK de KMS para el bucket de estado.** SSE-S3 es gratis y suficiente a esta escala.
+- **`thumbprint_list` en el provider OIDC.** Ya no es un control de seguridad real.
+- **Kubernetes.** El directorio `k8s/` existe de una idea inicial, pero el proyecto va a ECS
+  Fargate — menos superficie operativa y más barato para un portafolio.
