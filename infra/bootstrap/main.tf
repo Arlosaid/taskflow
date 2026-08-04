@@ -1,4 +1,8 @@
 resource "aws_s3_bucket" "tfstate" {
+  #checkov:skip=CKV2_AWS_62:State changes have no event-driven consumer in this bootstrap module.
+  #checkov:skip=CKV_AWS_144:Cross-region replication requires a separately managed DR bucket and is out of scope here.
+  #checkov:skip=CKV_AWS_18:Access logging requires a separately managed log bucket; CloudTrail is the account-level audit source.
+  #checkov:skip=CKV_AWS_145:SSE-S3 is intentional for this low-cost state bucket; a customer-managed KMS key adds unnecessary key management.
   bucket = var.state_bucket_name
 
   lifecycle {
