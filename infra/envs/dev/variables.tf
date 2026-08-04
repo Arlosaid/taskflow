@@ -7,5 +7,5 @@ variable "aws_region" {
 variable "aws_profile" {
   description = "AWS CLI profile and is null when is CI/CD"
   type        = string
-  default     = "null"
+  default     = null
 }
