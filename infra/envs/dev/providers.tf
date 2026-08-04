@@ -7,7 +7,7 @@ provider "aws" {
       Project     = "TaskFlow"
       Environment = "dev"
       ManagedBy   = "Terraform"
-      Owner       = "Alonso"
+      Owner       = "Alonso de la Cruz"
     }
   }
 }

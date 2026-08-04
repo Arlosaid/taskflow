@@ -63,3 +63,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "tfstate" {
     }
   }
 }
+
+resource "aws_iam_openid_connect_provider" "github" {
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+}

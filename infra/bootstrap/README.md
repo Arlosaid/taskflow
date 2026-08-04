@@ -26,6 +26,7 @@ No modules.
 
 | Name | Type |
 |------|------|
+| [aws_iam_openid_connect_provider.github](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_openid_connect_provider) | resource |
 | [aws_s3_bucket.tfstate](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket) | resource |
 | [aws_s3_bucket_lifecycle_configuration.tfstate](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_lifecycle_configuration) | resource |
 | [aws_s3_bucket_public_access_block.tfstate](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_public_access_block) | resource |
@@ -43,6 +44,7 @@ No modules.
 
 | Name | Description |
 |------|-------------|
+| <a name="output_aws_iam_openid_connect_provider_arn"></a> [aws\_iam\_openid\_connect\_provider\_arn](#output\_aws\_iam\_openid\_connect\_provider\_arn) | ARN of the OIDC provider |
 | <a name="output_state_bucket_arn"></a> [state\_bucket\_arn](#output\_state\_bucket\_arn) | ARN of the Terraform state bucket |
 | <a name="output_state_bucket_name"></a> [state\_bucket\_name](#output\_state\_bucket\_name) | Put this in the backend block of every environment |
 <!-- END_TF_DOCS -->
