@@ -22,7 +22,7 @@ pasando por CI, en vez de retrofitear seguridad después.
 | Federación OIDC verificada de punta a punta (smoke test) | ✅ |
 | Todo lo demás | ⬜ |
 
-**Siguiente acción:** pasos 6 y 7 — GitHub Environments y `pr.yml`. Con eso se cierra el Bloque B.
+**Siguiente acción:** paso 7 — `pr.yml`. Con eso se cierra el Bloque B.
 
 ---
 
@@ -31,7 +31,8 @@ pasando por CI, en vez de retrofitear seguridad después.
 - [x] **1.** Unificar `required_providers` (`~> 6.0`) y `required_version` (`>= 1.11`) en todos los directorios
 - [x] **2.** ~~ADRs~~ — descartado a propósito; las decisiones van en `bitacora.md`
 - [ ] **3.** `Makefile` con `up` / `down` / `local` / `test` / `fmt`
-- [ ] **4.** README completo: diagrama, cómo correr en local, tabla de costos, sección "Known accepted risks"
+- [ ] **4.** README completo: diagrama, cómo correr en local, tabla de costos, sección "Known
+      accepted risks" (incluir: un solo entorno, sin aprobación manual a prod)
 
 ## Bloque B — Identidad y primer pipeline (1 fin de semana) ← *mayor aprendizaje*
 
@@ -42,7 +43,10 @@ pasando por CI, en vez de retrofitear seguridad después.
 - [x] **5.5** Permisos: `ReadOnlyAccess` + acceso al state separado por rol (plan no escribe el state)
 - [x] **5.7** Módulo consumido desde `envs/dev` y aplicado a mano
 - [x] **5.8** Verificado con un workflow desechable: `assumed-role/taskflow-dev-github-deploy` ✅
-- [ ] **6.** GitHub Environments `dev` y `prod`, con required reviewer en `prod`
+- [x] **6.** ~~GitHub Environments `dev` y `prod`~~ — **descartado a propósito**: un solo entorno,
+      push directo a main. El rol `deploy` ya acepta `:ref:refs/heads/main`, así que no hacen
+      falta. Consecuencia: sin gate de aprobación manual → va a "Known accepted risks".
+      Pendiente menor: recortar el trust policy a sólo `refs/heads/main`.
 - [ ] **7.** `.github/workflows/pr.yml`: `lint-infra` + `terraform plan` comentado en el PR
 
 **Hito:** un PR con el plan de Terraform comentado automáticamente, autenticado sin ninguna
