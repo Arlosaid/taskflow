@@ -202,10 +202,37 @@ son del formato viejo.
 **Sacar el literal del token decodificado** y usar ése. El token es la única fuente de verdad;
 la documentación y los blogs envejecen.
 
+**Lo confirmé en carne propia.** El smoke test falló con `Not authorized to perform
+sts:AssumeRoleWithWebIdentity` y el step que decodifica el JWT me dio el literal:
+
+```json
+"sub": "repo:Arlosaid@99146811/taskflow@1316477490:ref:refs/heads/main"
+"aud": "sts.amazonaws.com"
+"repository_owner_id": "99146811"
+"repository_id": "1316477490"
+```
+
+Mi trust policy decía `repo:Arlosaid/taskflow:ref:refs/heads/main`. El `aud` estaba bien; el
+`sub` era el único problema. Mi prefijo real es:
+
+```
+repo:Arlosaid@99146811/taskflow@1316477490
+```
+
 ```bash
 # Los IDs también se pueden consultar por API:
 curl -s https://api.github.com/repos/Arlosaid/taskflow | jq '{owner_id: .owner.id, repo_id: .id}'
 ```
+
+**El step de depuración se pagó solo.** Sin él, el mensaje de STS es genérico y no dice *qué*
+no coincidió. Con él, el diagnóstico fue inmediato. Merece la pena tenerlo a mano para cualquier
+problema futuro de OIDC.
+
+**Detalle del log que vale la pena recordar:** `configure-aws-credentials@v6` reintentó 12 veces
+con backoff exponencial durante 2m33s. Un `sub` que no coincide **no es un error transitorio** —
+la respuesta iba a ser idéntica las 12 veces. La action no puede distinguir "AWS saturado" de
+"tu política está mal", así que reintenta todo. **12 reintentos con el mismo error = error
+determinista; no esperes, ve a leer la política.**
 
 **Cómo lo dejé en el módulo:** en vez de construir el prefijo desde `github_repository`, lo paso
 como variable con el literal ya resuelto, para que el código documente la trampa:
