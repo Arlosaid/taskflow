@@ -30,7 +30,10 @@ account-level GitHub OIDC provider. The `github-oidc` module is applied: roles
 The federation is verified end to end: a workflow assumed the deploy role and got temporary
 credentials with no stored secrets.
 
-Not built yet: any CI workflow, any workload infrastructure (VPC/ECR/ECS/RDS), the
+CI exists: `.github/workflows/pr.yml` runs fmt/validate/tflint/checkov and posts a
+`terraform plan` on every pull request, assuming the read-only `plan` role via OIDC.
+
+Not built yet: the deploy workflow, any workload infrastructure (VPC/ECR/ECS/RDS), the
 application itself, tests, Dockerfile, migrations.
 
 ## Conventions
