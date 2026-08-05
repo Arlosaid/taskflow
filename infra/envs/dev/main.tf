@@ -9,9 +9,9 @@ data "aws_s3_bucket" "tfstate" {
 module "github_oidc" {
   source = "../../modules/github-oidc"
 
-  github_repository = "Arlosaid/taskflow"
-  oidc_provider_arn = data.aws_iam_openid_connect_provider.github.arn
-  state_bucket_arn  = data.aws_s3_bucket.tfstate.arn
-  state_key_prefix  = "dev/"
-  env               = "dev"
+  oidc_provider_arn     = data.aws_iam_openid_connect_provider.github.arn
+  state_bucket_arn      = data.aws_s3_bucket.tfstate.arn
+  state_key_prefix      = "dev/"
+  env                   = "dev"
+  github_subject_prefix = "repo:Arlosaid@99146811/taskflow@1316477490"
 }

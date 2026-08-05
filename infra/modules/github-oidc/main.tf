@@ -17,7 +17,7 @@ data "aws_iam_policy_document" "plan_assume_role" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:pull_request"]
+      values   = ["${var.github_subject_prefix}:pull_request"]
     }
   }
 }
@@ -42,9 +42,9 @@ data "aws_iam_policy_document" "deploy_assume_role" {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:${var.github_repository}:ref:refs/heads/main",
-        "repo:${var.github_repository}:environment:dev",
-        "repo:${var.github_repository}:environment:prod",
+        "${var.github_subject_prefix}:ref:refs/heads/main",
+        "${var.github_subject_prefix}:environment:dev",
+        "${var.github_subject_prefix}:environment:prod",
       ]
     }
   }
