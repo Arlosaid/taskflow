@@ -19,10 +19,10 @@ pasando por CI, en vez de retrofitear seguridad después.
 | Versión del provider AWS unificada a `~> 6.0` | ✅ |
 | Provider OIDC de GitHub en bootstrap + output | ✅ |
 | `infra/modules/github-oidc/` — roles `plan` y `deploy` aplicados en AWS | ✅ |
+| Federación OIDC verificada de punta a punta (smoke test) | ✅ |
 | Todo lo demás | ⬜ |
 
-**Siguiente acción:** el smoke test del sub-paso 5.8, para comprobar que la federación OIDC
-funciona de verdad antes de construir `pr.yml` encima.
+**Siguiente acción:** pasos 6 y 7 — GitHub Environments y `pr.yml`. Con eso se cierra el Bloque B.
 
 ---
 
@@ -41,7 +41,7 @@ funciona de verdad antes de construir `pr.yml` encima.
 - [x] **5.4** Trust policies: condiciones `aud` y `sub` para los roles `plan` y `deploy`
 - [x] **5.5** Permisos: `ReadOnlyAccess` + acceso al state separado por rol (plan no escribe el state)
 - [x] **5.7** Módulo consumido desde `envs/dev` y aplicado a mano
-- [ ] **5.8** Verificar con un workflow desechable (`aws sts get-caller-identity`)
+- [x] **5.8** Verificado con un workflow desechable: `assumed-role/taskflow-dev-github-deploy` ✅
 - [ ] **6.** GitHub Environments `dev` y `prod`, con required reviewer en `prod`
 - [ ] **7.** `.github/workflows/pr.yml`: `lint-infra` + `terraform plan` comentado en el PR
 

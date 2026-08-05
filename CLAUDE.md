@@ -27,7 +27,8 @@ Working: the Terraform state backend (S3, versioned, encrypted, native lockfile)
 account-level GitHub OIDC provider. The `github-oidc` module is applied: roles
 `taskflow-dev-github-plan` (read-only, assumable from pull requests) and
 `taskflow-dev-github-deploy` (assumable from main and the dev/prod environments) exist in AWS.
-Not yet verified end to end — the OIDC smoke test is the next step.
+The federation is verified end to end: a workflow assumed the deploy role and got temporary
+credentials with no stored secrets.
 
 Not built yet: any CI workflow, any workload infrastructure (VPC/ECR/ECS/RDS), the
 application itself, tests, Dockerfile, migrations.

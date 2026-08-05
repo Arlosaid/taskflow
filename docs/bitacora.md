@@ -435,6 +435,92 @@ S3 de key fija no debería ocurrir, pero si en CI aparece un `AccessDenied` sobr
 
 ---
 
+## [5.8] El smoke test, y una tarde entera perdida en credenciales locales
+
+**Qué hice:** un workflow desechable con `workflow_dispatch` que sólo asume el rol y corre
+`aws sts get-caller-identity`. Salida final:
+
+```
+arn:aws:sts::654740195516:assumed-role/taskflow-dev-github-deploy/...
+```
+
+`assumed-role` y `arn:aws:sts::` (no `iam::`) = credenciales temporales obtenidas por federación.
+Cero secretos en el repositorio. **La federación OIDC funciona de punta a punta.**
+
+**Por qué probé el rol `deploy` y no el de `plan`:** un `workflow_dispatch` en main emite
+`sub = ...:ref:refs/heads/main`, que coincide con deploy. El de plan sólo acepta `:pull_request`
+y no se puede ejercitar desde aquí — se estrena con el PR real del paso 7.
+
+### El problema que me costó la tarde: `InvalidClientTokenId` en local
+
+Después de arreglar el `sub`, `terraform plan` dejó de funcionar **en mi máquina**. La causa
+real: **tenía SSO a medio configurar**. Pero llegué ahí después de descartar tres hipótesis, y
+las tres enseñan algo.
+
+**Lo primero que hay que saber leer — qué significa cada error de credenciales:**
+
+| Error | Significa |
+|---|---|
+| `InvalidClientTokenId` | Se encontraron credenciales, **AWS no reconoce la access key** |
+| `SignatureDoesNotMatch` | La key existe, **el secreto está mal** |
+| `no valid credential sources` | **No se encontró ninguna** credencial |
+| `ExpiredToken` | Credenciales temporales **caducadas** |
+
+Distinguirlas ahorra horas. Yo estuve buscando "no hay credenciales" cuando el error decía
+claramente "hay, pero no las reconozco".
+
+### Lección 1 — las variables de entorno ganan al perfil
+
+En la cadena estándar de credenciales, **las variables de entorno van primero**, antes que el
+perfil del archivo. Un `AWS_ACCESS_KEY_ID` viejo exportado en el shell rompe todo aunque el
+provider tenga `profile = "taskflow-dev"` bien puesto.
+
+Es **el mismo mecanismo** que hace funcionar OIDC en CI (paso 5.6): allí juega a favor, aquí en
+contra. Primer sitio donde mirar ante cualquier problema de credenciales: `env | grep -i AWS`.
+
+### Lección 2 — WSL tiene dos `$HOME`, y yo estaba a caballo
+
+Mi `PATH` tenía `/mnt/c/Program Files/Amazon/AWSCLIV2/`: el `aws` que ejecutaba era **el binario
+de Windows**, leyendo `C:\Users\Alonso\.aws\`. Terraform es un binario de Linux y lee
+`/home/alonso/.aws/`. **Dos archivos distintos con el mismo nombre de perfil.**
+
+Por eso `aws sts get-caller-identity --profile taskflow-dev` funcionaba y `terraform plan` no.
+
+La regla que adopto: **todo el flujo del proyecto vive del lado Linux.** AWS CLI, Terraform, git,
+el repo en `~/projects` (nunca en `/mnt/c`, que además es lento). Para editar, la extensión WSL
+de VS Code / Cursor abre la carpeta de Linux desde la interfaz de Windows.
+
+### Lección 3 — CRLF corrompe archivos de configuración
+
+Al copiar el `credentials` de Windows, `cat -A` mostró `^M$` al final de cada línea. Un `\r`
+pegado al valor convierte `AKIA...` en `AKIA...\r`, que AWS no reconoce → `InvalidClientTokenId`.
+
+No era mi causa raíz, pero es real y encaja con el mismo síntoma. `sed -i 's/\r$//' archivo` lo
+arregla, y un heredoc (`cat > archivo <<'EOF'`) escribe siempre con LF.
+
+Es exactamente el motivo por el que este proyecto se desarrolla en Linux: el runner de CI es
+`ubuntu-latest`, y cuanto más se parezca mi máquina al runner, menos "en mi máquina sí funciona".
+
+### Dos errores de método que cometí
+
+**Pegué una credencial real en un chat.** Corrí `cat -A ~/.aws/credentials` y su salida incluye
+el `aws_secret_access_key` completo. Tuve que rotar la llave. **Nunca volcar un archivo de
+credenciales sin filtrar**: `cat archivo | sed 's/=.*/= REDACTED/'`.
+
+**Pegué los marcadores de posición literalmente.** Ejecuté `export AWS_ACCESS_KEY_ID='AKIA...'`
+tal cual, con los puntos suspensivos. El test no probó nada y encima dejó variables basura en el
+shell que rompían los intentos siguientes. Si un comando de depuración falla, **verificar que lo
+que se ejecutó era lo que se pretendía ejecutar** antes de sacar conclusiones.
+
+### Lo que me llevo
+
+Tres problemas seguidos en el paso 5 —el `profile` fijo, el `sub` con immutable claims, y este—
+y **ninguno era un error de código**. `terraform validate` dio verde en los tres. La lección de
+5.6 se confirmó a lo grande: existe una clase entera de fallos que ninguna herramienta estática
+detecta, porque dependen de *dónde* se ejecuta el código, no de qué dice.
+
+---
+
 ## Referencia — qué detecta cada herramienta
 
 Los cuatro linters se solapan menos de lo que parece. Saber la diferencia es una pregunta
