@@ -173,6 +173,79 @@ existe.
 - **`sub`** → "viene de *este* repo, en *esta* circunstancia". **Es la frontera de seguridad
   real.**
 
+### ⚠️ Immutable subject claims — mi repo NO usa el formato clásico
+
+**El hallazgo más importante de todo el paso 5.** Mi repositorio usa el formato nuevo de
+**immutable subject claims** de GitHub, que incorpora el **ID numérico del propietario** y el
+**ID del repositorio**:
+
+```
+repo:OWNER@OWNER-ID/REPO@REPO-ID:<contexto>
+```
+
+en vez del clásico `repo:OWNER/REPO:<contexto>`. GitHub aplica este formato por defecto a los
+repositorios creados **después del 15 de julio de 2026**.
+
+**Por qué existe:** el nombre de un repo o de una organización se puede **renombrar**, y alguien
+puede registrar después el nombre que tú dejaste libre. Un trust policy anclado a
+`repo:Arlosaid/taskflow` seguiría al nombre, no a mi repositorio. Los IDs numéricos son
+inmutables: identifican **este** repo para siempre, sobreviven a renombrados y no se pueden
+reclamar. Es una mejora real de seguridad.
+
+**La consecuencia práctica, y es brutal:** una condición construida con el nombre plano
+(`repo:Arlosaid/taskflow:pull_request`) **nunca hace match**. Y no falla de forma ruidosa ni
+descriptiva — sale un `Not authorized to perform sts:AssumeRoleWithWebIdentity` genérico, el
+mismo que sale por cualquier otro error de `sub`. Todos los tutoriales y ejemplos que hay online
+son del formato viejo.
+
+**La lección que generalizo:** nunca ensamblar el `sub` a mano a partir del nombre del repo.
+**Sacar el literal del token decodificado** y usar ése. El token es la única fuente de verdad;
+la documentación y los blogs envejecen.
+
+**Lo confirmé en carne propia.** El smoke test falló con `Not authorized to perform
+sts:AssumeRoleWithWebIdentity` y el step que decodifica el JWT me dio el literal:
+
+```json
+"sub": "repo:Arlosaid@99146811/taskflow@1316477490:ref:refs/heads/main"
+"aud": "sts.amazonaws.com"
+"repository_owner_id": "99146811"
+"repository_id": "1316477490"
+```
+
+Mi trust policy decía `repo:Arlosaid/taskflow:ref:refs/heads/main`. El `aud` estaba bien; el
+`sub` era el único problema. Mi prefijo real es:
+
+```
+repo:Arlosaid@99146811/taskflow@1316477490
+```
+
+```bash
+# Los IDs también se pueden consultar por API:
+curl -s https://api.github.com/repos/Arlosaid/taskflow | jq '{owner_id: .owner.id, repo_id: .id}'
+```
+
+**El step de depuración se pagó solo.** Sin él, el mensaje de STS es genérico y no dice *qué*
+no coincidió. Con él, el diagnóstico fue inmediato. Merece la pena tenerlo a mano para cualquier
+problema futuro de OIDC.
+
+**Detalle del log que vale la pena recordar:** `configure-aws-credentials@v6` reintentó 12 veces
+con backoff exponencial durante 2m33s. Un `sub` que no coincide **no es un error transitorio** —
+la respuesta iba a ser idéntica las 12 veces. La action no puede distinguir "AWS saturado" de
+"tu política está mal", así que reintenta todo. **12 reintentos con el mismo error = error
+determinista; no esperes, ve a leer la política.**
+
+**Cómo lo dejé en el módulo:** en vez de construir el prefijo desde `github_repository`, lo paso
+como variable con el literal ya resuelto, para que el código documente la trampa:
+
+```hcl
+variable "github_subject_prefix" {
+  description = "Immutable subject prefix taken verbatim from a decoded OIDC token, e.g. repo:owner@123/repo@456. Do NOT assemble this from the repo name: this repo uses immutable subject claims and the plain owner/repo form never matches."
+  type        = string
+}
+```
+
+Y las condiciones quedan `"${var.github_subject_prefix}:pull_request"`, etc.
+
 ### La forma del claim `sub` — la tabla a memorizar
 
 | Cómo dispara el job | `sub` que emite GitHub |
@@ -243,6 +316,208 @@ mejor.
 
 **Este apply es manual y está bien.** CI no puede crear el rol que CI necesita para
 autenticarse. Junto con bootstrap, es el último `terraform apply` manual legítimo del proyecto.
+
+---
+
+## [5.3–5.7] Escribiendo el módulo: dos errores que cometí
+
+**Qué hice:** el módulo completo — dos trust policies, dos roles, `ReadOnlyAccess` en el de plan,
+acceso al state, outputs — y lo consumí desde `envs/dev` con data lookups.
+
+**Decisiones propias que tomé y mantengo:**
+- `github_repository` como una sola variable `"owner/name"` en vez de `github_org` +
+  `github_repo`. Menos superficie y el claim `sub` se construye igual.
+- `state_key_prefix` como variable (`"dev/"`) en vez de derivarlo de `env`. Más explícito.
+- Condición `s3:prefix` sobre el `ListBucket`, acotándolo a `dev/*` en vez de al bucket entero.
+  Estrictamente más restrictivo de lo que necesitaba.
+
+### Error 1 — compartí el mismo policy document entre los dos roles
+
+Escribí un solo `data "aws_iam_policy_document" "state_access"` y se lo puse a `plan` y a
+`deploy`. Como ese documento concede `PutObject` y `DeleteObject` sobre
+`dev/terraform.tfstate`, **el rol de sólo lectura podía sobrescribir o borrar el state.**
+
+Eso anula la razón de existir de los dos roles. Un PR ya no "como mucho corre un plan": puede
+corromper el state, y entonces Terraform pierde el mapa de lo que existe y el siguiente apply
+intenta recrearlo todo.
+
+**Lo que confunde:** `plan` **sí** necesita escribir — pero **sólo el objeto `.tflock`**, nunca
+el state. Un permiso legítimo y otro peligroso viven en la misma ruta, separados por el sufijo
+del nombre. Van en documentos separados:
+
+- `plan` → `GetObject` sobre `terraform.tfstate` + `PutObject`/`DeleteObject` **sólo** sobre
+  `terraform.tfstate.tflock`
+- `deploy` → `GetObject`/`PutObject`/`DeleteObject` sobre ambos
+
+**La lección general:** reutilizar un policy document entre dos roles es cómodo, y es
+exactamente cómo se pierde el mínimo privilegio sin darse cuenta. Si dos roles existen porque
+deben poder hacer cosas distintas, sus políticas **no pueden ser el mismo objeto**.
+
+### Error 2 — los nombres de rol sin el entorno
+
+Puse `taskflow-github-plan` en vez de `taskflow-dev-github-plan`.
+
+**Los nombres de rol de IAM son globales por cuenta.** Cuando exista `envs/prod` en la misma
+cuenta e instancie este módulo otra vez, el apply muere con `EntityAlreadyExists`.
+
+Es **la misma clase de bug** que evité poniendo el provider OIDC en bootstrap, aparecida por
+otro lado: un recurso con identificador único a nivel cuenta, instanciado desde algo que se
+repite por entorno. Cuando un recurso de AWS tiene un nombre único global, el entorno tiene que
+ir **en el nombre**, no sólo en el directorio.
+
+### Error 3 — `.terraform.lock.hcl` dentro del módulo
+
+Se me coló porque corrí `terraform init` dentro del directorio del módulo. Los módulos **no son
+root modules**: no tienen backend propio ni lock propio. El lock que manda es el de
+`infra/envs/dev/`. Borrado.
+
+---
+
+## [5.7] El apply, y lo que aprendí leyendo el plan
+
+**Qué hice:** apliqué el módulo a mano desde `infra/envs/dev` con mi perfil local. Quedaron
+creados `taskflow-dev-github-plan` y `taskflow-dev-github-deploy` con sus políticas.
+
+### Renombrar un recurso = destruirlo y crearlo
+
+Al separar el policy document cambié las etiquetas de los recursos (`plan_state` →
+`plan_state_access`). El plan me mostró **2 to destroy**, y me asusté antes de leer el motivo:
+
+```
+# (because aws_iam_role_policy.deploy_state is not in configuration)
+```
+
+**Concepto:** Terraform identifica los recursos por su **dirección** (`aws_iam_role_policy.plan_state`),
+no por el nombre que tienen en AWS. Si cambio la etiqueta, para él el viejo desapareció de la
+configuración y hay uno nuevo. Destruir + crear.
+
+En una policy inline da igual, se recrea en milisegundos. **En una base de datos o un bucket,
+eso borra el recurso.** Para esos casos existe el bloque `moved`:
+
+```hcl
+moved {
+  from = aws_iam_role_policy.plan_state
+  to   = aws_iam_role_policy.plan_state_access
+}
+```
+
+Le dice "es el mismo objeto, sólo cambió de nombre" y el plan pasa a no mostrar cambios.
+Aquí no valía la pena, pero es la herramienta para el día que renombre algo con datos dentro.
+
+**Regla que me llevo: leer siempre el motivo del destroy antes de aprobar un plan.** "2 to
+destroy" no dice nada por sí solo; el comentario de arriba sí.
+
+### El `description` que se me cayó
+
+Al reescribir el archivo se me perdieron los `description` de los dos roles y el plan iba a
+borrarlos (`-> null`). No rompe nada, pero es lo único que distingue un rol de otro cuando los
+veo listados en la consola de IAM meses después. Los repuse antes de aplicar.
+
+**Recordatorio:** en un plan, un `-> null` significa que borré algo del código sin querer.
+Vale la pena buscarlos.
+
+### El resultado, que es la respuesta a una pregunta de entrevista
+
+| | `s3:GetObject` state | `s3:PutObject` state | `s3:PutObject` tflock |
+|---|---|---|---|
+| `plan` | ✅ | ❌ | ✅ |
+| `deploy` | ✅ | ✅ | ✅ |
+
+Esa tabla **es** la respuesta a *"¿qué impide que un pull request corrompa tu infraestructura?"*.
+El rol de plan puede leer el estado y tomar el lock, y nada más. No puede sobrescribirlo.
+
+### Pendiente de vigilar
+
+La condición `"s3:prefix" = "dev/*"` sobre el `ListBucket`: con `StringLike`, una llamada a
+`ListBucket` **sin** parámetro de prefijo no hace match y devuelve `AccessDenied`. Con un backend
+S3 de key fija no debería ocurrir, pero si en CI aparece un `AccessDenied` sobre `ListBucket`,
+ése es el primer sospechoso.
+
+---
+
+## [5.8] El smoke test, y una tarde entera perdida en credenciales locales
+
+**Qué hice:** un workflow desechable con `workflow_dispatch` que sólo asume el rol y corre
+`aws sts get-caller-identity`. Salida final:
+
+```
+arn:aws:sts::654740195516:assumed-role/taskflow-dev-github-deploy/...
+```
+
+`assumed-role` y `arn:aws:sts::` (no `iam::`) = credenciales temporales obtenidas por federación.
+Cero secretos en el repositorio. **La federación OIDC funciona de punta a punta.**
+
+**Por qué probé el rol `deploy` y no el de `plan`:** un `workflow_dispatch` en main emite
+`sub = ...:ref:refs/heads/main`, que coincide con deploy. El de plan sólo acepta `:pull_request`
+y no se puede ejercitar desde aquí — se estrena con el PR real del paso 7.
+
+### El problema que me costó la tarde: `InvalidClientTokenId` en local
+
+Después de arreglar el `sub`, `terraform plan` dejó de funcionar **en mi máquina**. La causa
+real: **tenía SSO a medio configurar**. Pero llegué ahí después de descartar tres hipótesis, y
+las tres enseñan algo.
+
+**Lo primero que hay que saber leer — qué significa cada error de credenciales:**
+
+| Error | Significa |
+|---|---|
+| `InvalidClientTokenId` | Se encontraron credenciales, **AWS no reconoce la access key** |
+| `SignatureDoesNotMatch` | La key existe, **el secreto está mal** |
+| `no valid credential sources` | **No se encontró ninguna** credencial |
+| `ExpiredToken` | Credenciales temporales **caducadas** |
+
+Distinguirlas ahorra horas. Yo estuve buscando "no hay credenciales" cuando el error decía
+claramente "hay, pero no las reconozco".
+
+### Lección 1 — las variables de entorno ganan al perfil
+
+En la cadena estándar de credenciales, **las variables de entorno van primero**, antes que el
+perfil del archivo. Un `AWS_ACCESS_KEY_ID` viejo exportado en el shell rompe todo aunque el
+provider tenga `profile = "taskflow-dev"` bien puesto.
+
+Es **el mismo mecanismo** que hace funcionar OIDC en CI (paso 5.6): allí juega a favor, aquí en
+contra. Primer sitio donde mirar ante cualquier problema de credenciales: `env | grep -i AWS`.
+
+### Lección 2 — WSL tiene dos `$HOME`, y yo estaba a caballo
+
+Mi `PATH` tenía `/mnt/c/Program Files/Amazon/AWSCLIV2/`: el `aws` que ejecutaba era **el binario
+de Windows**, leyendo `C:\Users\Alonso\.aws\`. Terraform es un binario de Linux y lee
+`/home/alonso/.aws/`. **Dos archivos distintos con el mismo nombre de perfil.**
+
+Por eso `aws sts get-caller-identity --profile taskflow-dev` funcionaba y `terraform plan` no.
+
+La regla que adopto: **todo el flujo del proyecto vive del lado Linux.** AWS CLI, Terraform, git,
+el repo en `~/projects` (nunca en `/mnt/c`, que además es lento). Para editar, la extensión WSL
+de VS Code / Cursor abre la carpeta de Linux desde la interfaz de Windows.
+
+### Lección 3 — CRLF corrompe archivos de configuración
+
+Al copiar el `credentials` de Windows, `cat -A` mostró `^M$` al final de cada línea. Un `\r`
+pegado al valor convierte `AKIA...` en `AKIA...\r`, que AWS no reconoce → `InvalidClientTokenId`.
+
+No era mi causa raíz, pero es real y encaja con el mismo síntoma. `sed -i 's/\r$//' archivo` lo
+arregla, y un heredoc (`cat > archivo <<'EOF'`) escribe siempre con LF.
+
+Es exactamente el motivo por el que este proyecto se desarrolla en Linux: el runner de CI es
+`ubuntu-latest`, y cuanto más se parezca mi máquina al runner, menos "en mi máquina sí funciona".
+
+### Dos errores de método que cometí
+
+**Pegué una credencial real en un chat.** Corrí `cat -A ~/.aws/credentials` y su salida incluye
+el `aws_secret_access_key` completo. Tuve que rotar la llave. **Nunca volcar un archivo de
+credenciales sin filtrar**: `cat archivo | sed 's/=.*/= REDACTED/'`.
+
+**Pegué los marcadores de posición literalmente.** Ejecuté `export AWS_ACCESS_KEY_ID='AKIA...'`
+tal cual, con los puntos suspensivos. El test no probó nada y encima dejó variables basura en el
+shell que rompían los intentos siguientes. Si un comando de depuración falla, **verificar que lo
+que se ejecutó era lo que se pretendía ejecutar** antes de sacar conclusiones.
+
+### Lo que me llevo
+
+Tres problemas seguidos en el paso 5 —el `profile` fijo, el `sub` con immutable claims, y este—
+y **ninguno era un error de código**. `terraform validate` dio verde en los tres. La lección de
+5.6 se confirmó a lo grande: existe una clase entera de fallos que ninguna herramienta estática
+detecta, porque dependen de *dónde* se ejecuta el código, no de qué dice.
 
 ---
 
