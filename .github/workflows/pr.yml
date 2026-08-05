@@ -1,0 +1,100 @@
+name: pr
+
+on: pull_request
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write     # para comentar el plan en el PR
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true    # en PRs sí: un plan viejo no aporta nada
+
+env:
+  AWS_REGION: us-east-1
+  TF_ROOT: infra/envs/dev
+
+jobs:
+  lint-infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      - run: terraform fmt -check -recursive
+
+      # -backend=false: validate no necesita el state ni credenciales.
+      - name: validate
+        run: |
+          for d in infra/bootstrap infra/envs/dev; do
+            terraform -chdir="$d" init -backend=false -input=false
+            terraform -chdir="$d" validate
+          done
+
+      - uses: terraform-linters/setup-tflint@v4
+      - run: tflint --init && tflint --recursive
+
+      - uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra
+          soft_fail: false
+
+  plan:
+    needs: lint-infra          # no gastes un assume-role si el formato está roto
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/envs/dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::654740195516:role/taskflow-dev-github-plan
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - run: terraform init -input=false
+
+      - id: plan
+        run: terraform plan -no-color -input=false -lock-timeout=5m
+        continue-on-error: true     # que el comentario se publique aunque falle
+
+      - uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.stdout }}
+          OUTCOME: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const marker = '<!-- terraform-plan-dev -->';
+            const plan = (process.env.PLAN || '').slice(0, 60000);
+            const body = `${marker}
+            ### Terraform plan — \`dev\` (${process.env.OUTCOME})
+
+            <details><summary>Ver plan</summary>
+
+            \`\`\`terraform
+            ${plan}
+            \`\`\`
+
+            </details>`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo, comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: context.issue.number, body,
+              });
+            }
+
+      - if: steps.plan.outcome == 'failure'
+        run: exit 1              # el comentario ya se publicó; ahora sí falla el check
