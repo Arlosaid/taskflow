@@ -43,10 +43,12 @@ pasando por CI, en vez de retrofitear seguridad después.
 - [x] **5.5** Permisos: `ReadOnlyAccess` + acceso al state separado por rol (plan no escribe el state)
 - [x] **5.7** Módulo consumido desde `envs/dev` y aplicado a mano
 - [x] **5.8** Verificado con un workflow desechable: `assumed-role/taskflow-dev-github-deploy` ✅
-- [x] **6.** ~~GitHub Environments `dev` y `prod`~~ — **descartado a propósito**: un solo entorno,
-      push directo a main. El rol `deploy` ya acepta `:ref:refs/heads/main`, así que no hacen
-      falta. Consecuencia: sin gate de aprobación manual → va a "Known accepted risks".
-      Pendiente menor: recortar el trust policy a sólo `refs/heads/main`.
+- [ ] **6.** GitHub Environments `dev` y `prod` con required reviewer — **aplazado, no descartado**.
+      Por ahora: un solo entorno y push directo a main, que el rol `deploy` ya acepta vía
+      `:ref:refs/heads/main`. El trust policy conserva a propósito los `sub` de
+      `:environment:dev` y `:environment:prod`, así que activarlo el día de mañana es crear los
+      Environments en la interfaz — sin tocar Terraform. Mientras tanto no hay gate de
+      aprobación manual → mencionarlo en "Known accepted risks".
 - [ ] **7.** `.github/workflows/pr.yml`: `lint-infra` + `terraform plan` comentado en el PR
 
 **Hito:** un PR con el plan de Terraform comentado automáticamente, autenticado sin ninguna
