@@ -12,24 +12,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Show OIDC claims
-        env:
-          AUDIENCE: sts.amazonaws.com
-        run: |
-          TOKEN_JSON=$(curl -s \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$AUDIENCE")
+      - name: Debug OIDC Claims
+        uses: github/actions-oidc-debugger@main
+        with:
+          audience: sts.amazonaws.com
 
-          ID_TOKEN=$(echo "$TOKEN_JSON" | jq -r '.value')
-
-          echo "$ID_TOKEN" |
-            awk -F. '{print $2}' |
-            base64 -d 2>/dev/null |
-            jq
-
-      - uses: aws-actions/configure-aws-credentials@v6
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::654740195516:role/taskflow-dev-github-deploy
           aws-region: us-east-1
 
-      - run: aws sts get-caller-identity
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
