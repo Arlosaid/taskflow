@@ -20,9 +20,10 @@ pasando por CI, en vez de retrofitear seguridad después.
 | Provider OIDC de GitHub en bootstrap + output | ✅ |
 | `infra/modules/github-oidc/` — roles `plan` y `deploy` aplicados en AWS | ✅ |
 | Federación OIDC verificada de punta a punta (smoke test) | ✅ |
+| `pr.yml` — lint + plan comentado en el PR con el rol de sólo lectura | ✅ |
 | Todo lo demás | ⬜ |
 
-**Siguiente acción:** paso 7 — `pr.yml`. Con eso se cierra el Bloque B.
+**Siguiente acción:** Bloque A (Makefile + README, una noche) y después el Bloque C — la aplicación.
 
 ---
 
@@ -49,10 +50,13 @@ pasando por CI, en vez de retrofitear seguridad después.
       `:environment:dev` y `:environment:prod`, así que activarlo el día de mañana es crear los
       Environments en la interfaz — sin tocar Terraform. Mientras tanto no hay gate de
       aprobación manual → mencionarlo en "Known accepted risks".
-- [ ] **7.** `.github/workflows/pr.yml`: `lint-infra` + `terraform plan` comentado en el PR
+- [x] **7.** `.github/workflows/pr.yml`: `lint-infra` + `terraform plan` comentado en el PR ✅
 
-**Hito:** un PR con el plan de Terraform comentado automáticamente, autenticado sin ninguna
-llave guardada — y todavía sin desplegar nada.
+**Hito alcanzado ✅** — un PR con el plan de Terraform comentado automáticamente, autenticado sin
+ninguna llave guardada, y todavía sin desplegar nada. **Bloque B cerrado.**
+
+Pendientes menores: borrar `.github/workflows/oidc-smoke-test.yml` (ya cumplió) y mergear la
+rama `feature-add-pr.yml`.
 
 ## Bloque C — La aplicación (2–3 noches)
 

@@ -521,6 +521,72 @@ detecta, porque dependen de *dónde* se ejecuta el código, no de qué dice.
 
 ---
 
+## [6] Environments: aplazados, no descartados
+
+Decidí quedarme con **un solo entorno y push directo a main**. No hacen falta Environments: el
+rol `deploy` ya acepta `sub = ...:ref:refs/heads/main`, y un job que corre en un push a main sin
+declarar `environment:` emite exactamente ese claim.
+
+**Pero dejé a propósito los `sub` de `:environment:dev` y `:environment:prod` en el trust
+policy.** No son un riesgo —si el Environment no existe, GitHub no puede emitir un token con ese
+claim— y significan que el día que quiera el gate de aprobación sólo tengo que crear el
+Environment en la interfaz, **sin tocar Terraform**.
+
+**Lo que pierdo, dicho como decisión y no como olvido:** no hay aprobación manual antes de
+producción. Va a "Known accepted risks" del README.
+
+**Concepto que ordena esto:** un GitHub Environment sirve para dos cosas —reviewer obligatorio y
+secretos por entorno— y engancha con OIDC de una forma elegante: un job con `environment: prod`
+**no arranca** hasta que alguien aprueba, y sólo entonces GitHub emite el token con ese claim.
+La aprobación humana y la frontera criptográfica son la misma cosa, no dos controles separados.
+
+---
+
+## [7] `pr.yml` — el pipeline antes que la infraestructura
+
+**Qué hice:** un workflow de pull request con dos jobs, `lint-infra` y `plan`, que comenta el
+diff de Terraform en el PR. **Cierra el Bloque B.**
+
+**El hito:** un PR con el plan comentado automáticamente, autenticado sin ninguna llave guardada
+en el repositorio — y todavía sin haber desplegado nada de aplicación. El carril antes que el
+tren, tal como decía la regla del roadmap.
+
+### Decisiones de diseño y su porqué
+
+- **`needs: lint-infra`** — el lint no toca AWS. Si el formato está roto no tiene sentido federar
+  un token y hablar con STS. **Fallar barato primero.**
+- **`continue-on-error: true` en el plan, + un `exit 1` al final** — si el plan falla quiero
+  **ver el error en el PR**, no un check rojo con el motivo enterrado en los logs. Este patrón
+  publica el comentario y después marca el job como fallido.
+- **Marcador HTML invisible (`<!-- terraform-plan-dev -->`)** — permite encontrar el comentario
+  anterior y **actualizarlo** en vez de añadir uno nuevo en cada push. Un PR con quince
+  comentarios de plan es ruido; uno que siempre refleja el estado actual es una herramienta.
+- **`cancel-in-progress: true`** — en PRs sí, un plan de un commit ya superado no le sirve a
+  nadie. En `deploy.yml` (paso 17) será **`false`**: cancelar un apply a medias sí hace daño.
+- **`-lock-timeout=5m`** — si otro plan tiene el `.tflock`, esperar en vez de morir al instante.
+- **`init -backend=false` en el job de lint** — `validate` no necesita el state ni credenciales.
+  Así el lint corre sin asumir ningún rol.
+- **`<details>`** — un plan largo colapsado mantiene el PR legible.
+
+### Sobre los triggers, que casi me confunde
+
+Creía que había que mergear a main para que el workflow se activara. **Falso para
+`pull_request`**: GitHub ejecuta el workflow desde la **rama del PR**, así que el propio PR que
+introduce `pr.yml` ya lo ejecuta.
+
+Lo que sí requería estar en main era el smoke test, porque **`workflow_dispatch` sólo aparece en
+la pestaña Actions si el archivo está en la rama por defecto**. Dos triggers, dos reglas
+distintas.
+
+### El rol `plan` se estrenó aquí
+
+Nunca se había ejercitado: su `sub` es `...:pull_request` y ningún `workflow_dispatch` puede
+producirlo. Funcionó a la primera porque el prefijo del subject está extraído a variable — que
+era justo la razón de haberlo hecho así. La condición `s3:prefix` sobre el `ListBucket`, que
+tenía anotada como sospechosa, tampoco dio problemas.
+
+---
+
 ## Referencia — qué detecta cada herramienta
 
 Los cuatro linters se solapan menos de lo que parece. Saber la diferencia es una pregunta
