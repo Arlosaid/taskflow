@@ -173,6 +173,52 @@ existe.
 - **`sub`** → "viene de *este* repo, en *esta* circunstancia". **Es la frontera de seguridad
   real.**
 
+### ⚠️ Immutable subject claims — mi repo NO usa el formato clásico
+
+**El hallazgo más importante de todo el paso 5.** Mi repositorio usa el formato nuevo de
+**immutable subject claims** de GitHub, que incorpora el **ID numérico del propietario** y el
+**ID del repositorio**:
+
+```
+repo:OWNER@OWNER-ID/REPO@REPO-ID:<contexto>
+```
+
+en vez del clásico `repo:OWNER/REPO:<contexto>`. GitHub aplica este formato por defecto a los
+repositorios creados **después del 15 de julio de 2026**.
+
+**Por qué existe:** el nombre de un repo o de una organización se puede **renombrar**, y alguien
+puede registrar después el nombre que tú dejaste libre. Un trust policy anclado a
+`repo:Arlosaid/taskflow` seguiría al nombre, no a mi repositorio. Los IDs numéricos son
+inmutables: identifican **este** repo para siempre, sobreviven a renombrados y no se pueden
+reclamar. Es una mejora real de seguridad.
+
+**La consecuencia práctica, y es brutal:** una condición construida con el nombre plano
+(`repo:Arlosaid/taskflow:pull_request`) **nunca hace match**. Y no falla de forma ruidosa ni
+descriptiva — sale un `Not authorized to perform sts:AssumeRoleWithWebIdentity` genérico, el
+mismo que sale por cualquier otro error de `sub`. Todos los tutoriales y ejemplos que hay online
+son del formato viejo.
+
+**La lección que generalizo:** nunca ensamblar el `sub` a mano a partir del nombre del repo.
+**Sacar el literal del token decodificado** y usar ése. El token es la única fuente de verdad;
+la documentación y los blogs envejecen.
+
+```bash
+# Los IDs también se pueden consultar por API:
+curl -s https://api.github.com/repos/Arlosaid/taskflow | jq '{owner_id: .owner.id, repo_id: .id}'
+```
+
+**Cómo lo dejé en el módulo:** en vez de construir el prefijo desde `github_repository`, lo paso
+como variable con el literal ya resuelto, para que el código documente la trampa:
+
+```hcl
+variable "github_subject_prefix" {
+  description = "Immutable subject prefix taken verbatim from a decoded OIDC token, e.g. repo:owner@123/repo@456. Do NOT assemble this from the repo name: this repo uses immutable subject claims and the plain owner/repo form never matches."
+  type        = string
+}
+```
+
+Y las condiciones quedan `"${var.github_subject_prefix}:pull_request"`, etc.
+
 ### La forma del claim `sub` — la tabla a memorizar
 
 | Cómo dispara el job | `sub` que emite GitHub |

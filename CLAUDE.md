@@ -67,6 +67,11 @@ terraform fmt -check -recursive
   no per-environment state ever tries to own it. **IAM role names are account-global too** —
   every role name must carry the environment (`taskflow-dev-...`) or a second environment in
   the same account will collide.
+- **This repo uses GitHub's immutable subject claims.** The OIDC `sub` claim is
+  `repo:OWNER@OWNER-ID/REPO@REPO-ID:<context>`, not the classic `repo:OWNER/REPO:<context>`.
+  GitHub applies this format by default to repositories created after 2026-07-15. Trust policy
+  conditions built from the plain `owner/repo` string will silently never match. Always take the
+  literal subject from a decoded token rather than assembling it from the repo name.
 - The `plan` and `deploy` roles must never share a policy document. `plan` gets `GetObject` on
   the state plus `PutObject`/`DeleteObject` on the `.tflock` only; `deploy` gets write access to
   the state itself. Sharing the document silently gives a pull request the ability to corrupt
