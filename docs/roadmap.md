@@ -25,7 +25,7 @@ infraestructura de carga.
 | `pr.yml` — lint + `terraform plan` comentado en el PR con el rol de sólo lectura | ✅ |
 | Aplicación, tests, Docker, VPC/ECR/ECS/RDS, deploy pipeline | ⬜ |
 
-**Siguiente acción:** Bloque A (Makefile + README, una noche) y después el Bloque C — la aplicación.
+**Siguiente acción:** Bloque C — la aplicación (pasos 8 y 9).
 
 **Limpieza pendiente:** borrar `infra/modules/github-oidc/.terraform.lock.hcl` (los módulos no
 son root modules y no llevan lock propio).
@@ -36,11 +36,11 @@ son root modules y no llevan lock propio).
 
 - [x] **1.** Unificar `required_providers` (`~> 6.0`) y `required_version` (`>= 1.11`)
 - [x] **2.** ~~ADRs~~ — descartado a propósito; las decisiones van en `bitacora.md`
-- [ ] **3.** `Makefile` con `fmt` / `plan` / `apply` / `local` / `test`, encapsulando el
-      `export TF_VAR_aws_profile=taskflow-dev`
-- [ ] **4.** README completo: qué es, diagrama, cómo correr en local, tabla de costos, y
-      **"Known accepted risks"** (un solo entorno sin aprobación manual + los cuatro skips de
-      checkov del bootstrap)
+- [x] **3.** `Makefile` con `fmt` / `lint` / `plan` / `apply` / `destroy`, encapsulando el
+      `export TF_VAR_aws_profile`. CI **no** lo usa: allí la variable debe quedar sin definir.
+      Faltan `local` y `test`, que llegan con el Bloque C.
+- [ ] **4.** README completo — **aplazado**. El contenido ya está en la bitácora (diagrama de
+      identidad, tabla de permisos, riesgos aceptados); es reorganizarlo cuando apetezca.
 
 ## Bloque B — Identidad y primer pipeline ✅ CERRADO
 
