@@ -13,4 +13,5 @@ module "github_oidc" {
   oidc_provider_arn = data.aws_iam_openid_connect_provider.github.arn
   state_bucket_arn  = data.aws_s3_bucket.tfstate.arn
   state_key_prefix  = "dev/"
+  env               = "dev"
 }

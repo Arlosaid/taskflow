@@ -18,3 +18,8 @@ variable "state_key_prefix" {
   description = "Prefix for the environment state objects, such as dev/"
   type        = string
 }
+
+variable "env" {
+  description = "Environment name. IAM role names are account-global, so it must be part of the name."
+  type        = string
+}
