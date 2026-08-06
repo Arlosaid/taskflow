@@ -29,10 +29,10 @@ def readyz() -> dict:
     except SQLAlchemyError as err:
         logger.exception("Database readiness check failed")
 
-    raise HTTPException(
-        status_code=503,
-        detail={
-            "status": "unavailable",
-            "checks": {"db": "fail"},
-        },
-    ) from err
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unavailable",
+                "checks": {"db": "fail"},
+            },
+        ) from err 
