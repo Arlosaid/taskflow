@@ -56,6 +56,9 @@ taskflow/
 │
 ├── .pre-commit-config.yaml       # ruff, terraform fmt/validate/tflint/checkov/docs, gitleaks
 ├── .tflint.hcl
+├── makefile                      # atajos locales. CI NO lo usa, a propósito → ver [3]
+├── pyproject.toml                # dependencias reales + pytest + ruff → ver [8]
+├── uv.lock                       # versiones congeladas, commiteado igual que un lock de Terraform
 ├── CLAUDE.md                     # contexto del repo para sesiones de IA
 └── docs/
     ├── roadmap.md                # los 20 pasos, con casillas
@@ -402,6 +405,37 @@ revisor nota inmediatamente.
 
 → Concepto en 2.3.
 
+## [3] El makefile — ergonomía local, nunca CI
+
+**Qué hice:** `makefile` con `fmt`, `lint`, `plan`, `apply`, `destroy` y un `help` autodocumentado
+como target por defecto. Encapsula el `export TF_VAR_aws_profile=taskflow-dev` que antes había
+que recordar en cada terminal nueva.
+
+**Por qué así:**
+- **CI no usa este archivo, a propósito.** `pr.yml` llama a terraform directamente porque en el
+  runner `TF_VAR_aws_profile` debe quedar **sin definir** para que el provider caiga a las
+  credenciales OIDC (ver [5.6]). Un `make plan` en CI reintroduciría en silencio el bug del
+  perfil. El comentario de cabecera del makefile existe para que nadie "mejore" el workflow
+  haciéndolo usar make.
+- **`?=` en vez de `=`** — asigna sólo si la variable no viene ya del entorno. El día que exista
+  prod: `TF_ENV=infra/envs/prod make plan`, sin tocar el archivo.
+- **`terraform -chdir=` en vez de `cd`** — cada línea de una receta corre en su **propio shell**;
+  un `cd` en una línea no afecta a la siguiente. `-chdir` elimina esa trampa clásica de make.
+- **`local` y `test` aplazados** — no hay app ni tests que envolver. Un target vacío es peor que
+  no tenerlo; llegan con los puntos 10 y 11.
+
+**Concepto:**
+- `.PHONY` declara que el target no produce un archivo con ese nombre. Sin él, si un día existe
+  un archivo llamado `plan` en la raíz, `make plan` diría "up to date" y no ejecutaría nada.
+- `export` en make pasa la variable a los procesos hijos; Terraform lee cualquier
+  `TF_VAR_<nombre>` del entorno — las dos piezas juntas son lo que hace funcionar el atajo.
+- El `help` autodocumentado: los `## comentario` de cada target son datos, no decoración — el
+  grep/awk los convierte en la salida de `make help`. Patrón estándar en la industria.
+
+**Trampa:** el archivo se llama `makefile` en minúscula. GNU make lo encuentra (su orden de
+búsqueda es `GNUmakefile`, `makefile`, `Makefile`), pero la convención visible es `Makefile` y
+algún tooling ajeno a make puede buscar sólo esa forma.
+
 ## [5.6] `aws_profile` opcional — que dev sirva en local y en CI
 
 **Qué hice:** el `default` de `var.aws_profile` pasó de `"taskflow-dev"` a `null`.
@@ -519,6 +553,37 @@ y todavía sin haber desplegado nada de aplicación. El carril antes que el tren
 **El rol `plan` se estrenó aquí** y funcionó a la primera, porque el prefijo del subject está
 extraído a variable — justo la razón de haberlo hecho así. La condición `s3:prefix` que tenía
 anotada como sospechosa tampoco dio problemas.
+
+## [8] `pyproject.toml` real — adelantado del Bloque C
+
+**Qué hice:** el `pyproject.toml` dejó de ser un placeholder: `[project]` con las dependencias de
+la app (FastAPI, uvicorn, SQLAlchemy, Alembic, psycopg 3, pydantic-settings), grupo `dev`
+(pytest, httpx, pip-audit), configuración de pytest y ruff, y un `uv.lock` commiteado. Vino en el
+mismo PR que el makefile, fuera del orden del roadmap — el manifiesto nació antes que el paquete.
+
+**Por qué cada pieza:**
+- **uv + `uv.lock` commiteado** — misma lógica que `.terraform.lock.hcl` en los root modules
+  (ver 2.3): el manifiesto declara rangos, el lock congela versiones exactas. Sin lock, dos
+  instalaciones en días distintos producen entornos distintos.
+- **`[dependency-groups]` (PEP 735) y no `[project.optional-dependencies]`** — los extras son
+  para el *consumidor* del paquete (`taskflow[dev]` se publicaría); los grupos son para
+  *desarrollar* el paquete y no se publican. pytest no es una feature opcional de la app.
+- **`psycopg[binary]` v3, no psycopg2** — el driver actual, con rueda binaria para no compilar
+  en local. En el Dockerfile (punto 10) se decidirá si conviene otra variante.
+- **`pydantic-settings`** — la configuración entrará por variables de entorno (12-factor), que
+  es exactamente como ECS inyecta el bloque `secrets` del task definition (punto 16). La app se
+  configura igual en local y en Fargate.
+- **httpx en dev** — es lo que usa el `TestClient` de FastAPI; los tests del punto 11 lo piden.
+- **pip-audit en dev** — el análogo Python de checkov: escanear dependencias por CVEs conocidos.
+  Candidato a job de CI en el punto 11.
+
+**Concepto:** hatchling con `packages = ["app"]` — el build sólo empaqueta `app/`; `worker/` se
+decidirá cuando exista. `requires-python = ">=3.12"` fija el suelo del intérprete igual que
+`required_version` lo hace con Terraform.
+
+**Trampa:** `packages = ["app"]` apunta a un directorio que hoy sólo tiene un README — hasta que
+el punto 9 cree `app/__init__.py`, el proyecto no es instalable como paquete. Consecuencia de
+adelantar el paso: revisarlo apenas exista la app.
 
 ---
 ---
