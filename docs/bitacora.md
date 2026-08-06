@@ -36,13 +36,24 @@ decisión se olvida mucho antes que la decisión.
 
 ## Estado a día de hoy
 
-Cerrado el **Bloque B**: existe identidad federada y un pipeline de pull request. No existe
-todavía ni aplicación ni infraestructura de carga.
+Cerrado el **Bloque B** (identidad federada + pipeline de pull request) y arrancado el **Bloque C**:
+ya hay aplicación. La API responde `/healthz` y `/readyz`, corre en un contenedor no-root, y
+levanta junto a Postgres con `docker compose`. No existe todavía infraestructura de carga en AWS
+ni ningún endpoint de negocio.
 
 ```
 taskflow/
 ├── .github/workflows/
 │   └── pr.yml                    # lint + terraform plan comentado en cada PR
+│
+├── app/                          # la API
+│   ├── config.py                 # pydantic-settings; ruta del .env absoluta → Problema 11
+│   ├── db.py                     # engine de SQLAlchemy con pool_pre_ping
+│   └── main.py                   # /healthz (liveness) y /readyz (readiness)
+│
+├── Dockerfile                    # multi-etapa, usuario no-root, HEALTHCHECK → 2.9
+├── docker-compose.yml            # api + postgres con condition: service_healthy → 2.10
+├── .dockerignore                 # mantiene el .env y el .git fuera de la imagen
 │
 ├── infra/
 │   ├── bootstrap/                # ⚠️ backend LOCAL. Se aplica a mano. Cosas de cuenta.
@@ -61,11 +72,12 @@ taskflow/
 ├── uv.lock                       # versiones congeladas, commiteado igual que un lock de Terraform
 ├── CLAUDE.md                     # contexto del repo para sesiones de IA
 └── docs/
-    ├── roadmap.md                # los 20 pasos, con casillas
+    ├── roadmap.md                # el plan por bloques, con casillas
+    ├── architecture.drawio       # el plano de datos, editable en diagrams.net
     └── bitacora.md               # este archivo
 ```
 
-Vacíos a propósito por ahora: `app/`, `worker/`, `k8s/`.
+Vacíos a propósito por ahora: `worker/` (llega en el Bloque F) y `k8s/` (fuera de alcance).
 
 ## El flujo de identidad, de un vistazo
 
@@ -374,6 +386,168 @@ Por eso el smoke test no es opcional: es la única verificación que prueba el e
 confía más en una supresión justificada que en un reporte limpio. Lo que no se vale es suprimir
 sin explicar.
 
+## 2.9 · Docker — imágenes, capas y contenedores
+
+Escrito desde cero, porque es la pieza que más se usa a diario y la que más se aprende de memoria
+sin entenderla.
+
+### El modelo mental: tres cosas distintas
+
+| Cosa | Qué es |
+|---|---|
+| **Dockerfile** | la receta. Texto, versionado en el repo |
+| **Imagen** | el resultado de ejecutar la receta. Inmutable, de sólo lectura, **apilada en capas** |
+| **Contenedor** | una imagen en ejecución, con una capa escribible encima. Se crea y se destruye sin tocar la imagen |
+
+La imagen es la clase; el contenedor, la instancia. De la misma imagen salen veinte contenedores
+idénticos, y eso es exactamente lo que hace ECS cuando corre dos tasks.
+
+**Contenedor vs máquina virtual** — la comparación que piden en entrevista: una VM virtualiza
+*hardware*, así que lleva su propio kernel y un SO completo; arranca en minutos y pesa gigas. Un
+contenedor **comparte el kernel del host** y sólo lleva el sistema de archivos de usuario;
+arranca en milisegundos. Por eso una imagen de Debian pesa 80 MB y no 2 GB: no incluye kernel.
+
+La consecuencia práctica: un contenedor Linux **no corre sobre un kernel Windows**. Docker
+Desktop en Windows levanta una VM Linux por debajo — de ahí que este proyecto viva en WSL.
+
+### Las capas, y por qué el orden de las líneas decide el tiempo de build
+
+Cada instrucción que toca el sistema de archivos (`COPY`, `RUN`, `ADD`) crea una **capa**, que es
+un diff contra la anterior. La imagen es la pila.
+
+Docker cachea capas: si la instrucción y sus entradas no cambiaron, la reusa. **Pero cuando una
+capa se invalida, todas las de abajo también.** De ahí la regla más importante de un Dockerfile:
+
+> Copia primero lo que cambia poco; al final, lo que cambia mucho.
+
+Las dependencias cambian una vez al mes; el código, veinte veces al día. Por eso el orden es:
+
+```dockerfile
+COPY pyproject.toml uv.lock ./       # cambia poco
+RUN uv sync --frozen --no-dev        # ← capa cara. Se reusa mientras el lock no cambie
+COPY app ./app                       # cambia mucho
+```
+
+Al revés — `COPY . .` y después instalar — **cada línea de Python que toques reinstala todas las
+dependencias**. La palabra para explicarlo es *invalidación de caché*.
+
+### El build context, y qué protege de verdad `.dockerignore`
+
+Cuando corres `docker build .`, ese punto no es decorativo: Docker **empaqueta ese árbol entero y
+lo envía al motor** antes de leer la primera línea del Dockerfile. Eso es el *build context*.
+
+`.dockerignore` decide qué no entra en ese paquete. Sirve para tres cosas, en este orden:
+
+1. **Seguridad.** Sin él, un `COPY . .` mete el `.env`, las llaves y el `.git` completo dentro de
+   la imagen. Y un secreto dentro de una capa **sigue en el registry aunque lo borres en una capa
+   posterior**: las capas anteriores siguen ahí y se extraen con un comando.
+2. **Velocidad.** Un `.venv` de 300 MB viajando al daemon en cada build.
+3. **Caché.** `__pycache__` y `.pytest_cache` cambian constantemente e invalidan capas sin motivo.
+
+### Multi-stage: por qué dos `FROM`
+
+Para *construir* dependencias hacen falta herramientas (compiladores, headers, `uv`). Para
+*ejecutar*, no. Un build multi-etapa usa una imagen con todo el herramental y copia sólo el
+resultado a una imagen limpia.
+
+Dos beneficios, y el segundo es de seguridad:
+
+- la imagen final pesa menos — menos que bajar en cada deploy y menos superficie que escanear;
+- **menos superficie de ataque**: un compilador dentro de un contenedor en producción es una
+  herramienta lista para quien consiga ejecución.
+
+### La imagen base: el tag es un blanco móvil
+
+`python:3.12-slim` **no identifica una versión**. Es un puntero que el equipo de Docker mueve
+cuando les da la gana. Pasó en este proyecto: el builder (`uv:python3.12-bookworm-slim`) trae
+Debian **bookworm** con Python 3.12.12, y `python:3.12-slim` ya apunta a Debian **trixie** con
+Python 3.12.13. Dos sistemas operativos distintos en el mismo Dockerfile, sin haberlo pedido.
+
+Hoy funciona por casualidad: glibc es compatible hacia adelante, así que una rueda compilada en
+bookworm corre en trixie. **Al revés reventaría**, y el día que el tag se mueva otra vez la
+lotería puede salir al revés. La disciplina es la misma que con `required_version` de Terraform:
+fijar la base explícitamente (`python:3.12-slim-bookworm`) para que las dos etapas sean el mismo
+sistema.
+
+### Usuario no-root
+
+Por defecto un contenedor corre como root. No es el root del host, pero sí es root **dentro** del
+contenedor: puede escribir cualquier archivo de la imagen e instalar lo que quiera, y si aparece
+una fuga del aislamiento el impacto es mucho mayor. Crear un usuario de sistema y poner `USER`
+antes del `CMD` cuesta dos líneas y es lo primero que mira un revisor.
+
+### `CMD` vs `ENTRYPOINT`, y por qué la forma de lista no es opcional
+
+`ENTRYPOINT` es el ejecutable; `CMD` son los argumentos por defecto y lo que se sobreescribe fácil
+al correr la imagen.
+
+Lo que de verdad importa: **usa siempre la forma de lista** (`["uvicorn", "app.main:app"]`), nunca
+la de cadena. La forma de cadena arranca un `/bin/sh -c` que se queda como PID 1 y **se traga las
+señales**: `docker stop` manda `SIGTERM`, el shell no lo propaga, y a los diez segundos Docker
+mata el proceso a la fuerza. El resultado son cierres sucios y peticiones cortadas a media
+respuesta — justo lo que no quieres durante un rolling deploy en ECS. Con la forma de lista,
+uvicorn es PID 1 y recibe la señal directo.
+
+### Detalles pequeños que se malentienden
+
+| Instrucción | Qué hace en realidad |
+|---|---|
+| `EXPOSE 8000` | **nada funcional**: es metadato/documentación. Publicar el puerto es `-p` o `ports:` |
+| `PYTHONUNBUFFERED=1` | Python deja de bufferizar stdout → los logs salen al instante. Sin esto salen a trozos, o se pierden si el contenedor muere |
+| `WORKDIR /app` | crea el directorio y entra. Un `RUN cd` no sirve: cada `RUN` es un shell nuevo |
+| `--chown` en `COPY` | evita un `RUN chown -R` posterior, que duplicaría todos los archivos en una capa nueva |
+
+### Los comandos que hay que tener en los dedos
+
+```bash
+docker build -t taskflow-api .                 # construir
+docker run --rm -p 8000:8000 taskflow-api      # correr y borrar al salir
+docker ps                                       # qué está corriendo
+docker logs -f <contenedor>                     # seguir los logs
+docker exec -it <contenedor> sh                 # entrar a mirar
+docker inspect --format='{{.State.Health.Status}}' <contenedor>
+docker history taskflow-api                     # ← el que más enseña
+```
+
+`docker history` muestra qué línea del Dockerfile costó cuántos MB. Es la herramienta para
+responder "¿por qué pesa 300 MB mi imagen?".
+
+## 2.10 · docker compose — el entorno local completo
+
+### DNS por nombre de servicio: la confusión número uno
+
+Compose crea una red propia y **cada servicio es resoluble por su nombre**. Por eso la URL de la
+base *dentro* del contenedor de la API es `db:5432`.
+
+`localhost` dentro de un contenedor es **ese contenedor**, no la máquina. Es el error que todos
+cometen una vez. Y para enredarlo más: `ports: "5432:5432"` publica Postgres en el host, así que
+desde la laptop —fuera de compose— sí es `localhost:5432`. Las dos cosas son ciertas a la vez, y
+por eso confunde.
+
+### `depends_on` no espera a que esté listo
+
+`depends_on: [db]` a secas sólo garantiza el **orden de arranque**. Pero "iniciado" no es
+"aceptando conexiones": Postgres tarda unos segundos más. La forma correcta es el par:
+
+- en `db`, un `healthcheck` con `pg_isready`;
+- en `api`, `depends_on: db: condition: service_healthy`.
+
+Es el mismo concepto que separa `/healthz` de `/readyz`, aplicado un nivel más abajo: *arrancado*
+y *listo* son estados distintos.
+
+### Volúmenes: sin ellos, los datos se van
+
+Un contenedor escribe en su capa escribible, que **muere con él**. `docker compose down` borra la
+base de datos entera. Un volumen nombrado desacopla los datos del ciclo de vida del contenedor.
+
+### El `.env` de compose no es el `.env` de la app
+
+Se parecen y no son lo mismo:
+
+- compose lee un `.env` del directorio del `docker-compose.yml` y sustituye `${VAR}` **al leer el
+  YAML** — sirve para no repetir el password en dos sitios del archivo;
+- el bloque `environment:` define variables **dentro del contenedor**, que es lo que la app lee.
+
 ---
 ---
 
@@ -585,6 +759,75 @@ decidirá cuando exista. `requires-python = ">=3.12"` fija el suelo del intérpr
 el punto 9 cree `app/__init__.py`, el proyecto no es instalable como paquete. Consecuencia de
 adelantar el paso: revisarlo apenas exista la app.
 
+## [9] `/healthz` y `/readyz` — la primera línea de aplicación
+
+**Qué hice:** `app/__init__.py`, `config.py` con pydantic-settings, `db.py` con el engine de
+SQLAlchemy, y `main.py` con los dos endpoints. Primer código Python del proyecto, después de todo
+el Bloque B — el carril antes que el tren, cumplido.
+
+**Por qué DOS endpoints y no uno.** Es la decisión de la que cuelga todo lo demás:
+
+| | Pregunta que responde | Quién lo consume | Qué provoca si falla |
+|---|---|---|---|
+| `/healthz` | ¿está vivo el proceso? | `HEALTHCHECK` de Docker, ECS | **reinicia** el contenedor |
+| `/readyz` | ¿puedo atender tráfico? | el target group del ALB | lo **saca de rotación**, sin matarlo |
+
+Si `/healthz` checara la base y la base se cae, el orquestador reiniciaría *todos* los
+contenedores en bucle — convirtiendo una caída de base de datos en una caída total, y encima
+impidiendo que la app se recupere sola cuando la base vuelva. Con la separación correcta, una
+caída de base deja la app viva, fuera de rotación, y vuelve sola.
+
+**Conceptos que entraron con esto:**
+
+- **pydantic-settings y 12-factor.** Cada campo de `Settings` mapea a una variable de entorno del
+  mismo nombre. Es *exactamente* el mecanismo con el que ECS inyectará el bloque `secrets` del
+  punto 21: la app se configura igual en la laptop y en Fargate, y la diferencia está en quién
+  pone las variables, no en el código.
+- **`pool_pre_ping=True`.** Antes de entregar una conexión del pool, lanza un ping barato; si está
+  muerta la descarta y abre otra. Sin esto, la primera petición después de un failover de RDS o de
+  un reinicio de Postgres falla con una conexión rancia.
+- **No filtrar el error al cliente.** El mensaje de un fallo de conexión trae el host y el usuario
+  de la base. Va al log con `logger.exception`; al cliente sólo `{"db": "fail"}`.
+- **503 y no 500.** 503 dice *"estoy sano, mi dependencia no"*; 500 dice *"estoy roto"*. Importa
+  para la alarma de 5xx del punto 32: son diagnósticos distintos a las tres de la mañana.
+
+**Dos trampas, las dos en la Parte 4:** el `raise` fuera del `except` (Problema 10) y el `env_file`
+relativo al directorio de trabajo (Problema 11).
+
+## [10] Docker y compose — `/readyz` en verde por primera vez
+
+**Qué hice:** `Dockerfile` multi-etapa, `.dockerignore`, `docker-compose.yml` con Postgres y la
+API, y los targets `local` y `test` del makefile. La teoría completa está en 2.9 y 2.10.
+
+**El hito:** `curl localhost:8000/readyz` → `200 {"status":"ok","checks":{"db":"ok"}}`. Es la
+primera vez que el endpoint puede decir la verdad, porque hasta ahora no había base contra la cual
+comprobar nada. Verificado también: el contenedor corre como `uid=100(app)` —no root—, el
+`HEALTHCHECK` de Docker reporta `healthy`, y la imagen pesa 298 MB.
+
+**Decisiones y su porqué:**
+
+| Decisión | Por qué |
+|---|---|
+| Builder = imagen oficial de `uv` | trae uv y Python listos; la etapa final no hereda nada de eso |
+| `--frozen --no-dev --no-install-project` | `--frozen` obliga a respetar `uv.lock` (falla si está desactualizado, en vez de resolver por su cuenta); `--no-dev` deja fuera pytest y ruff, que no pintan nada en producción |
+| `HEALTHCHECK` contra `/healthz`, no `/readyz` | aquí se ve el concepto de [9] en la práctica: este check decide **reiniciar**, y no quiero reinicios porque la base esté caída |
+| `UV_COMPILE_BYTECODE=1` | precompila los `.pyc` en build; el arranque del contenedor es más rápido, que es lo que importa cuando ECS levanta una task |
+| `PYTHONUNBUFFERED=1` | logs al instante en vez de a trozos → ver 2.9 |
+| Postgres con `healthcheck` + `condition: service_healthy` | "arrancado" no es "listo"; el mismo concepto de [9], un nivel más abajo |
+
+**Pendiente de este punto** (no bloquea, pero está anotado):
+
+- `COPY app ./app` en la etapa builder es trabajo muerto: con `--no-install-project`, la etapa
+  final copia el código del contexto, no del builder. Sobra.
+- La etapa final debe fijarse a `python:3.12-slim-bookworm` para igualar el SO del builder →
+  Problema 12.
+- Falta un volumen nombrado para Postgres: hoy `docker compose down` borra la base. Lo necesitaré
+  en cuanto llegue Alembic (punto 11), para probar migraciones sobre datos que sobrevivan.
+- El password está escrito dos veces en el compose; con la sustitución `${VAR}` de 2.10 se
+  escribe una sola vez.
+- Los targets `local` y `test` del makefile no llevan comentario `##`, así que **no aparecen en
+  `make help`** — el `help` se autogenera de esos comentarios (ver [3]).
+
 ---
 ---
 
@@ -603,6 +846,9 @@ adelantar el paso: revisarlo apenas exista la app.
 | 7 | `Not authorized to perform sts:AssumeRoleWithWebIdentity` | **Immutable subject claims** |
 | 8 | `InvalidClientTokenId` en local | SSO mal configurado (+ 3 hipótesis descartadas) |
 | 9 | `Missing required argument` / `Unsupported argument` | Renombrar una variable toca 3 archivos |
+| 10 | `/readyz` devuelve **500** donde el código dice 503 | `raise ... from err` fuera del `except` |
+| 11 | La app arranca desde `app/` pero no desde la raíz | `env_file` es relativo al directorio de trabajo |
+| 12 | — (todavía ninguno) | `python:3.12-slim` se movió de bookworm a trixie |
 
 ---
 
@@ -725,6 +971,83 @@ llama, no donde falta la definición — como un error de firma de función.
 
 **Los tres archivos cambian juntos:** la variable se **declara** en el módulo, se **usa** en el
 módulo, y se **pasa** desde el entorno.
+
+### Problema 10 — `raise ... from err` fuera del `except` ⭐
+
+**Síntoma:** con Postgres apagado, `/readyz` devolvía **500 Internal Server Error** en vez del 503
+que el código dice claramente que devuelve. Ninguna herramienta lo marcó: ruff en verde, la app
+arranca, y con la base encendida el endpoint funciona perfecto.
+
+**Causa:** el `raise HTTPException(503) from err` estaba indentado **fuera** del bloque `except`.
+Python **borra el nombre de la variable de excepción al salir del `except`** — es un `del err`
+implícito que el lenguaje hace a propósito, para no retener el traceback completo en memoria y
+crear un ciclo de referencias. Cuando la línea del `raise` se ejecutaba, `err` ya no existía:
+
+```
+UnboundLocalError: cannot access local variable 'err'
+```
+
+FastAPI ve una excepción no manejada y responde 500. El `HTTPException(503)` nunca llegaba a
+construirse.
+
+**Arreglo:** el `raise` va **dentro** del `except`.
+
+**Por qué vale la pena recordarlo:** es un error que sólo aparece en el camino de fallo. El camino
+feliz —el que pruebas mientras desarrollas— nunca lo toca. Es exactamente el argumento a favor de
+los tests del punto 16: el caso que no pruebas es el que se rompe, y aquí el caso no probado *era
+el manejo de errores*.
+
+**Y el impacto real, más allá del código:** en el punto 32 hay una alarma sobre los 5xx del ALB.
+Un `/readyz` que responde 500 cuando la base está caída dispara la alarma de "hay un bug en la
+app" en vez de la de "la dependencia no está".
+
+### Problema 11 — `env_file` es relativo al directorio de trabajo
+
+**Síntoma:** la app arrancaba desde `app/` pero fallaba desde la raíz del repo con
+`ValidationError: database_url — Field required`. Al mover el `.env` a la raíz, se invirtió: ahora
+fallaba desde `app/`. Parecía que el archivo "no servía en la raíz".
+
+**Causa:** `SettingsConfigDict(env_file=".env")` resuelve la ruta contra el **directorio desde el
+que ejecutas**, no contra el módulo donde está escrita. El comportamiento no dependía de dónde
+estaba el archivo sino de desde dónde arrancaba yo.
+
+**Arreglo:** una ruta absoluta calculada desde el propio módulo,
+`Path(__file__).resolve().parent.parent / ".env"`, y el `.env` en la raíz. Verificado: funciona
+desde la raíz, desde `app/` y desde `/`.
+
+**El concepto que quedó claro, y que es el importante:** en el contenedor **no hay ningún `.env`**.
+La configuración llega como variables de entorno de verdad, y pydantic-settings les da
+**precedencia sobre el archivo** — y si el `.env` no existe, simplemente lo ignora en vez de
+fallar. Por eso el mismo código sirve en los dos sitios sin un `if`:
+
+| Dónde | Qué pasa |
+|---|---|
+| laptop | no hay `DATABASE_URL` en el entorno → cae al `.env` de la raíz |
+| compose / ECS | `DATABASE_URL` viene del entorno → gana, y el `.env` ni siquiera existe |
+
+**Por qué el `.env` va en la raíz y no junto al código:** compose lo busca ahí, y un `.env`
+viviendo dentro de `app/` es una invitación a que un `COPY` lo hornee en una capa de la imagen
+→ ver 2.9.
+
+### Problema 12 — `python:3.12-slim` cambió de Debian por debajo
+
+**Síntoma:** ninguno todavía — y ése es el punto. Lo encontré comparando las dos etapas del
+Dockerfile, no porque algo fallara.
+
+**Causa:** el builder usa `uv:python3.12-bookworm-slim` (Debian **bookworm**, Python 3.12.12) y la
+etapa final usa `python:3.12-slim`, que **ya apunta a Debian trixie** (Python 3.12.13). El venv se
+construye contra un sistema y se ejecuta en otro.
+
+Hoy funciona por suerte: glibc es compatible hacia adelante, así que una rueda compilada en
+bookworm corre en trixie. **Al revés reventaría**, y el día que el tag se vuelva a mover la
+lotería puede salir al otro lado.
+
+**Arreglo:** fijar la etapa final a `python:3.12-slim-bookworm`, para que las dos etapas sean el
+mismo sistema operativo.
+
+**La lección general:** un tag de imagen **no es una versión**, es un puntero que alguien más
+mueve. Es la misma disciplina que `required_version` y `~> 6.0` en Terraform, o que commitear el
+`uv.lock`: si no lo fijas tú, lo decide otro y te enteras el día que se rompe.
 
 ---
 

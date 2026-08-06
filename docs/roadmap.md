@@ -30,11 +30,13 @@ infraestructura de carga.
 | `pr.yml` — lint + `terraform plan` comentado en el PR con el rol de sólo lectura | ✅ |
 | `makefile` — `fmt`/`lint`/`plan`/`apply`/`destroy`, encapsula el perfil AWS local | ✅ |
 | `pyproject.toml` + `uv.lock` — dependencias reales, grupo dev, pytest y ruff configurados | ✅ |
-| Aplicación, tests, Docker, VPC/ECR/ECS/RDS, deploy pipeline, worker, Step Functions | ⬜ |
+| `app/` — `/healthz` y `/readyz`, config por entorno, engine de SQLAlchemy | ✅ |
+| `Dockerfile` multi-etapa no-root + `docker-compose.yml` con Postgres | ✅ |
+| Tests, VPC/ECR/ECS/RDS, deploy pipeline, worker, Step Functions | ⬜ |
 
-**Siguiente acción:** el punto **9** — la API FastAPI mínima (`/healthz`, `/readyz`). El README
-(punto 4) queda como cierre del Bloque A, mejor escribirlo cuando ya exista algo que correr en
-local que documentar.
+**Siguiente acción:** el punto **11** — el modelo `Project`/`Task` y la primera migración de
+Alembic. El README (punto 4) queda como cierre del Bloque A: ahora ya hay algo que correr en
+local que documentar, así que se puede escribir cuando apetezca.
 
 **Reestructura 2026-08-06 (v2):** el Bloque C se amplió a backend robusto (dos recursos
 relacionados, JWT, patrón async-API, query optimizada con EXPLAIN); los secretos son un paso
@@ -85,11 +87,16 @@ van al final para cubrir el conjunto.
 - [x] **8.** `pyproject.toml` real: `[project]` con dependencias, grupo dev,
       `[tool.pytest.ini_options]` — adelantado junto con el makefile (PR #6), con `uv.lock`
       commiteado
-- [ ] **9.** API FastAPI mínima con `/healthz` (liveness, no toca nada) y `/readyz` (readiness,
+- [x] **9.** API FastAPI mínima con `/healthz` (liveness, no toca nada) y `/readyz` (readiness,
       checa la DB). Dos endpoints y no uno: si liveness checara la DB, una caída de DB haría
       que el orquestador reinicie todos los contenedores en bucle
-- [ ] **10.** `Dockerfile` multi-stage (usuario no-root, `HEALTHCHECK`) + `.dockerignore` +
-      `docker-compose.yml` con Postgres local. Targets `local` y `test` al makefile
+- [x] **10.** `Dockerfile` multi-stage (usuario no-root, `HEALTHCHECK`) + `.dockerignore` +
+      `docker-compose.yml` con Postgres local. Targets `local` y `test` al makefile.
+      Verificado: `readyz` → 200 con `db: ok`, contenedor como `uid=100(app)`, imagen 298 MB.
+      **Cinco pulidos anotados en la bitácora [10]**, ninguno bloqueante: fijar la etapa final a
+      `python:3.12-slim-bookworm`, quitar el `COPY app` muerto del builder, volumen nombrado para
+      Postgres, password una sola vez con `${VAR}`, y comentarios `##` en los targets nuevos del
+      makefile para que salgan en `make help`
 - [ ] **11.** Modelos relacionados `Project` y `Task` (SQLAlchemy 2.0 tipado) + Alembic con la
       primera migración — **sin** correrla al arrancar la app (con 2 tasks en ECS correrían en
       carrera). Concepto a dominar desde ya: **expand/contract** — toda migración compatible

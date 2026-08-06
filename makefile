@@ -26,3 +26,11 @@ apply:  ## terraform apply en dev
 
 destroy:  ## destruye todo lo billable de dev
 	terraform -chdir=$(TF_ENV) destroy
+
+.PHONY: local test
+
+local:
+	docker compose up -d
+
+test:
+	uv run pytest
