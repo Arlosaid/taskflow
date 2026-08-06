@@ -1,0 +1,108 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram name="TaskFlow · plano de datos" id="taskflow-runtime">
+    <mxGraphModel dx="1422" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ===== zonas ===== -->
+        <mxCell id="zAws" value="AWS · UNA CUENTA · us-east-1" style="rounded=0;html=1;dashed=1;dashPattern=8 5;fillColor=none;strokeColor=#8A98A1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontSize=11;fontColor=#8A98A1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="40" width="1160" height="660" as="geometry" />
+        </mxCell>
+        <mxCell id="zVpc" value="VPC · 10.0.0.0/16" style="rounded=0;html=1;dashed=1;dashPattern=8 5;fillColor=none;strokeColor=#8A98A1;verticalAlign=top;align=left;spacingLeft=12;spacingTop=6;fontSize=11;fontColor=#8A98A1;" vertex="1" parent="1">
+          <mxGeometry x="190" y="95" width="570" height="580" as="geometry" />
+        </mxCell>
+        <mxCell id="zPub" value="SUBRED PÚBLICA · 2 AZ" style="rounded=0;html=1;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#8A98A1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=4;fontSize=10;fontColor=#8A98A1;" vertex="1" parent="1">
+          <mxGeometry x="210" y="135" width="530" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="zPriv" value="SUBRED PRIVADA · 2 AZ · SIN NAT GATEWAY" style="rounded=0;html=1;dashed=1;dashPattern=6 4;fillColor=none;strokeColor=#8A98A1;verticalAlign=top;align=left;spacingLeft=10;spacingTop=4;fontSize=10;fontColor=#8A98A1;" vertex="1" parent="1">
+          <mxGeometry x="210" y="265" width="530" height="390" as="geometry" />
+        </mxCell>
+
+        <!-- ===== nodos ===== -->
+        <mxCell id="cliente" value="&lt;b&gt;Cliente&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;navegador · curl&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="30" y="155" width="120" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="alb" value="&lt;b&gt;ALB&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;termina TLS&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="385" y="155" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="&lt;b&gt;API · ECS Fargate&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;2 tasks · uvicorn&lt;br&gt;imagen tag = SHA&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="240" y="310" width="190" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="rds" value="&lt;b&gt;RDS PostgreSQL&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;privada · sin acceso público&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="240" y="540" width="190" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="worker" value="&lt;b&gt;Worker · Lambda&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;Powertools · idempotente&lt;br&gt;misma imagen de ECR&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="490" y="415" width="190" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="sns" value="&lt;b&gt;SNS&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;topic de tareas&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="850" y="290" width="150" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="sqs" value="&lt;b&gt;SQS&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;long polling&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="290" width="150" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="dlq" value="&lt;b&gt;DLQ&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;alarma si &amp;gt; 0&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="400" width="150" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="sfn" value="&lt;b&gt;Step Functions&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;report-generation&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="850" y="490" width="150" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="&lt;b&gt;S3&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:10px&quot;&gt;reportes&lt;/font&gt;" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#E4E9EC;strokeColor=#CBD4D9;fontColor=#161E24;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="490" width="150" height="55" as="geometry" />
+        </mxCell>
+
+        <!-- ===== VPC endpoints (rombos sobre el borde) ===== -->
+        <mxCell id="vpce1" value="" style="rhombus;html=1;fillColor=#FBFCFD;strokeColor=#55646E;" vertex="1" parent="1">
+          <mxGeometry x="748" y="340" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="vpce2" value="" style="rhombus;html=1;fillColor=#FBFCFD;strokeColor=#55646E;" vertex="1" parent="1">
+          <mxGeometry x="748" y="608" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="vpceLbl" value="◇ VPC endpoint — sin NAT Gateway, el tráfico a servicios AWS no sale a internet" style="text;html=1;align=left;fontSize=11;fontColor=#8A98A1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="710" width="600" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ===== flujos ===== -->
+        <mxCell id="e1" value="HTTPS :443" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;" edge="1" parent="1" source="cliente" target="alb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value=":8000 · /healthz" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="alb" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="5432 · sólo desde la SG de la app" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="api" target="rds">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="publish · import aceptado (202)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="api" target="sns">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="810" y="331" /><mxPoint x="810" y="317" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5" value="fan-out" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;" edge="1" parent="1" source="sns" target="sqs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="tras 3 intentos" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="sqs" target="dlq">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="event source mapping · lotes de 10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="sqs" target="worker">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="1040" y="331" /><mxPoint x="1040" y="455" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="actualiza el job" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="worker" target="rds">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="585" y="575" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" value="StartExecution · reporte" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="api" target="sfn">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points"><mxPoint x="460" y="374" /><mxPoint x="460" y="620" /><mxPoint x="810" y="620" /><mxPoint x="810" y="520" /></Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e10" value="PutObject · direct SDK" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#55646E;fontSize=10;fontColor=#55646E;endArrow=blockThin;endFill=1;" edge="1" parent="1" source="sfn" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
