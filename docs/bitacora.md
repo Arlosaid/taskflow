@@ -548,6 +548,69 @@ Se parecen y no son lo mismo:
   YAML** — sirve para no repetir el password en dos sitios del archivo;
 - el bloque `environment:` define variables **dentro del contenedor**, que es lo que la app lee.
 
+## 2.11 · Esquema y migraciones
+
+### Postgres no indexa las claves foráneas
+
+Crea índice automáticamente para la **clave primaria** y para los `UNIQUE`. Para una **clave
+foránea, no**. Y la clave foránea es justo la columna por la que se filtra siempre
+(`WHERE project_id = ...`, y todos los JOIN). Es de las omisiones más comunes y sale cara en
+cuanto la tabla crece.
+
+Otros motores sí lo hacen (MySQL/InnoDB crea el índice solo), así que la costumbre de otro stack
+engaña. En Postgres hay que declararlo.
+
+### `--autogenerate` produce un borrador, no un resultado
+
+Alembic compara el `Base.metadata` contra el esquema real y escribe una migración. Detecta bien
+tablas y columnas nuevas, pero:
+
+- se le escapan cambios de `server_default` y algunos de restricción;
+- **un renombre lo interpreta como borrar una columna y crear otra** — pérdida de datos
+  silenciosa, y en el diff parece inofensivo;
+- los cambios de tipo a veces salen sin el `USING` que Postgres necesita.
+
+Por eso el archivo generado **se lee entero antes de aplicarlo**. Y la `downgrade()` se escribe
+bien o se borra: una reversión rota es peor que ninguna, porque da confianza falsa el día que
+hace falta.
+
+La prueba que cierra el ciclo, y que cuesta treinta segundos:
+`upgrade head` → `downgrade -1` → `upgrade head`.
+
+### Dónde corren las migraciones, y expand/contract
+
+**No al arrancar la app.** Con dos tasks en ECS, las dos ejecutarían `upgrade head` a la vez y
+competirían. Corren como una **task de una sola vez, antes** de actualizar el servicio (punto 20).
+
+La parte sutil, y la que preguntan: durante un rolling deploy **el código viejo y el nuevo corren
+a la vez contra un único esquema**. Así que cada migración tiene que ser compatible hacia atrás
+con la versión anterior del código:
+
+| Deploy | Migración | Código |
+|---|---|---|
+| 1 | añade la columna **nullable** | todavía no la usa |
+| 2 | — | empieza a escribirla y leerla |
+| 3 | la vuelve `NOT NULL` / borra la vieja | ya nadie usa la vieja |
+
+**Nunca renombrar ni borrar una columna en la misma release que cambia el código.**
+
+### `passive_deletes=True` — quién borra los hijos
+
+Con `cascade="all, delete-orphan"` a secas, al borrar un proyecto SQLAlchemy **carga en memoria
+todas sus tareas y emite un `DELETE` por cada una**. Con `passive_deletes=True` confía en el
+`ON DELETE CASCADE` de la base y emite uno solo.
+
+Para un proyecto con 10 000 tareas es la diferencia entre 1 sentencia y 10 001. La condición es
+que el `ondelete="CASCADE"` exista de verdad en la clave foránea — si no, quedan filas huérfanas.
+Las dos piezas van juntas o no van.
+
+### Enum nativo vs `CHECK`
+
+Un `ENUM` de Postgres se ve más limpio, pero añadir un valor es un `ALTER TYPE` incómodo de
+migrar y de revertir. Un `String` con una restricción `CHECK` se cambia con una migración normal,
+y la validación de cara al usuario la hace Pydantic, que es donde el valor entra. Menos elegante
+en el diagrama, mucho más fácil de evolucionar.
+
 ---
 ---
 
@@ -827,6 +890,50 @@ comprobar nada. Verificado también: el contenedor corre como `uid=100(app)` —
   escribe una sola vez.
 - Los targets `local` y `test` del makefile no llevan comentario `##`, así que **no aparecen en
   `make help`** — el `help` se autogenera de esos comentarios (ver [3]).
+
+## [11] `Project` / `Task` y la primera migración
+
+**Qué hice:** `app/models.py` con el `Base` declarativo y los dos modelos en estilo tipado de
+SQLAlchemy 2.0, Alembic configurado, y la primera migración aplicada. La teoría está en 2.11.
+
+**Verificado de punta a punta**, no sólo "aplicó":
+
+| Prueba | Resultado |
+|---|---|
+| `upgrade head` → `downgrade -1` → `upgrade head` | el ciclo cierra; tras el downgrade sólo queda `alembic_version` |
+| Esquema real con `\d tasks` | índice `ix_tasks_project_id`, `CHECK`, FK con `ON DELETE CASCADE`, `timestamptz` con `now()` |
+| Borrar un proyecto con 2 tareas | `tareas_antes = 2` → `tareas_despues = 0`. El CASCADE funciona en la base |
+| Insertar `status = 'inventado'` | rechazado por `ck_tasks_status` |
+
+**Las cinco decisiones de esquema, y por qué cada una:**
+
+| Decisión | Por qué |
+|---|---|
+| `index=True` en `project_id` | Postgres **no** indexa las FK solas → 2.11. Es la columna de todos los filtros y JOINs |
+| `DateTime(timezone=True)` + `server_default=func.now()` | un datetime naive es un bug invisible; y que el default lo ponga la base la hace inmune a la deriva del reloj de un contenedor |
+| `status` como `String` + `CHECK` | un ENUM nativo es doloroso de migrar → 2.11 |
+| `ondelete="CASCADE"` explícito | qué pasa al borrar un proyecto es una decisión, no un default heredado |
+| `id` entero secuencial | está bien, **pero**: es enumerable y filtra cuántos registros hay. Ojo con la trampa conceptual — un ID difícil de adivinar **no** es el control contra BOLA; el control es el `WHERE` por dueño del punto 13. Un UUID es defensa en profundidad, no la defensa |
+
+**La pieza fina:** `passive_deletes=True` junto al `cascade="all, delete-orphan"`. Sin ella,
+borrar un proyecto haría que SQLAlchemy cargara todas sus tareas en memoria y emitiera un `DELETE`
+por cada una. Con ella, confía en el `ON DELETE CASCADE` de la base y emite uno. Las dos piezas
+—la del ORM y la de la FK— van juntas o dejan filas huérfanas → 2.11.
+
+**Decisión sobre la URL:** `env.py` la toma de `app.config.settings` con `set_main_option`, en vez
+del `sqlalchemy.url` del `alembic.ini`. Ese archivo va commiteado, así que la alternativa era
+meter credenciales al repositorio. De paso, Alembic y la app leen la misma configuración en local,
+en compose y en ECS.
+
+**Trampa colateral:** al mover el password del compose a `${VAR}` en el `.env` de la raíz, el
+`.env` pasó a tener claves (`POSTGRES_*`) que `Settings` no declara, y pydantic-settings las
+rechazaba. Arreglado con `extra="ignore"`. Es la costura entre los dos usos del mismo archivo que
+describe 2.10.
+
+**Pendiente menor:** `alembic.ini` conserva la línea de ejemplo
+`sqlalchemy.url = driver://user:pass@localhost/dbname`. No hace nada —`env.py` la sobreescribe—
+pero es configuración muerta que confunde a quien lea, y el patrón `user:pass` es justo lo que
+buscan los escáneres de secretos. Vaciarla.
 
 ---
 ---
