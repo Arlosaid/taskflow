@@ -32,11 +32,13 @@ infraestructura de carga.
 | `pyproject.toml` + `uv.lock` — dependencias reales, grupo dev, pytest y ruff configurados | ✅ |
 | `app/` — `/healthz` y `/readyz`, config por entorno, engine de SQLAlchemy | ✅ |
 | `Dockerfile` multi-etapa no-root + `docker-compose.yml` con Postgres | ✅ |
+| Modelos `Project`/`Task` + Alembic, migración aplicada y revertida | ✅ |
 | Tests, VPC/ECR/ECS/RDS, deploy pipeline, worker, Step Functions | ⬜ |
 
-**Siguiente acción:** el punto **11** — el modelo `Project`/`Task` y la primera migración de
-Alembic. El README (punto 4) queda como cierre del Bloque A: ahora ya hay algo que correr en
-local que documentar, así que se puede escribir cuando apetezca.
+**Siguiente acción:** el punto **12** — el CRUD de `/projects` y `/tasks`. Es el primer endpoint
+de negocio del proyecto y el núcleo del Bloque C. El README (punto 4) queda como cierre del
+Bloque A: ya hay algo que correr en local que documentar, así que se puede escribir cuando
+apetezca.
 
 **Reestructura 2026-08-06 (v2):** el Bloque C se amplió a backend robusto (dos recursos
 relacionados, JWT, patrón async-API, query optimizada con EXPLAIN); los secretos son un paso
@@ -97,10 +99,13 @@ van al final para cubrir el conjunto.
       `python:3.12-slim-bookworm`, quitar el `COPY app` muerto del builder, volumen nombrado para
       Postgres, password una sola vez con `${VAR}`, y comentarios `##` en los targets nuevos del
       makefile para que salgan en `make help`
-- [ ] **11.** Modelos relacionados `Project` y `Task` (SQLAlchemy 2.0 tipado) + Alembic con la
+- [x] **11.** Modelos relacionados `Project` y `Task` (SQLAlchemy 2.0 tipado) + Alembic con la
       primera migración — **sin** correrla al arrancar la app (con 2 tasks en ECS correrían en
       carrera). Concepto a dominar desde ya: **expand/contract** — toda migración compatible
-      con la versión anterior del código
+      con la versión anterior del código.
+      Verificado contra la base real: ciclo `upgrade`/`downgrade`/`upgrade`, `ON DELETE CASCADE`
+      y la restricción `CHECK`. Pendiente menor: vaciar el `sqlalchemy.url` de ejemplo que quedó
+      en `alembic.ini`
 - [ ] **12.** CRUD `/projects` y `/tasks`: schemas Pydantic separados del modelo ORM, códigos
       de estado correctos (201, 204, 404, 409, 422), paginación `limit`/`offset` (y saber
       narrar cursor-based), filtrado, sesión de DB por request con `Depends`, cuerpo de error
