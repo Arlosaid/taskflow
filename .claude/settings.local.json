@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(wsl.exe -d Ubuntu -- bash -lc \"cd /home/alonso/projects/taskflow && git diff makefile && echo '--- docker ---' && docker --version && docker compose version\")",
-      "Bash(wsl.exe -d Ubuntu -- bash -lc \"cd /home/alonso/projects/taskflow && docker compose up -d --build 2>&1 | tail -25\")",
-      "Bash(wsl.exe -d Ubuntu -- bash -lc \"sleep 4; cd /home/alonso/projects/taskflow && echo '=== endpoints ==='; curl -s -o /dev/null -w 'healthz -> %{http_code}\\\\n' localhost:8000/healthz; curl -s -w '\\\\nreadyz  -> %{http_code}\\\\n' localhost:8000/readyz; echo '=== usuario dentro del contenedor ==='; docker compose exec -T api id; echo '=== tamano de la imagen ==='; docker images taskflow-api --format '{{.Size}}'; echo '=== healthcheck de docker ==='; docker inspect --format='{{.State.Health.Status}}' taskflow-api-1\")"
-    ]
-  }
-}
