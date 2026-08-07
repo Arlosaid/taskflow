@@ -15,7 +15,7 @@ COPY app ./app
 
 
 # Etapa 2: imagen final, pequeña y sin herramientas de build.
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
@@ -27,7 +27,6 @@ RUN addgroup --system app && adduser --system --ingroup app app
 
 # Solo se toma el entorno virtual ya instalado del builder.
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
-COPY --chown=app:app app ./app
 
 EXPOSE 8000
 
